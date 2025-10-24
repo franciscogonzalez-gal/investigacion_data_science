@@ -1,4 +1,4 @@
-
+# -*- coding: utf-8 -*-
 """
 Módulo: load_to_bigquery.py
 Descripción:
@@ -41,7 +41,7 @@ Cómo ejecutar:
        actualizar GOOGLE_JSON_CREDENTIALS_PATH o establecer la variable de entorno
        GOOGLE_APPLICATION_CREDENTIALS con la ruta al JSON.
     2) Ejecutar desde la terminal (Windows PowerShell o CMD):
-       python c:\Users\... \Investigacion\load_to_bigquery.py
+       python c:/Users/... /Investigacion/load_to_bigquery.py
 
 Buenas prácticas y notas de seguridad:
     - No subir el archivo de credenciales JSON a repositorios públicos.
@@ -56,16 +56,11 @@ Manejo de errores recomendado:
       para capturar errores de autenticación, permisos o límites de cuota.
     - Validar que el archivo Excel exista y que pandas pueda leerlo correctamente.
 
-Autor y mantenimiento:
-    - Autor: Equipo/Usuario (actualizar según corresponda)
-    - Fecha: 2025-10-24
-    - Notas de cambios: Inicial — integración básica con libreria_conexion_big_query
 
 Referencias:
     - https://cloud.google.com/bigquery/docs
     - Documentación de google-cloud-bigquery (si aplica)
 """
-
 
 import pandas as pd
 from libreria_conexion_big_query import create_bigquery_table_from_dataframe, write_dataframe_to_bigquery
@@ -85,7 +80,8 @@ def main():
         dataframe_name=GCP_TABLE_ID,
         project_id=GCP_PROJECT_ID, 
         dataset_id=GCP_DATASET_ID,
-        credentials_path=GOOGLE_JSON_CREDENTIALS_PATH
+        credentials_path=GOOGLE_JSON_CREDENTIALS_PATH,
+        replace_if_exists=True
     )
     
     write_dataframe_to_bigquery(
