@@ -1,18 +1,120 @@
 # -*- coding: utf-8 -*-
-"""
-Scraper de reseñas para Trustpilot.
+"""Scraper de reseñas orientado a Trustpilot (archivo principal).
 
-Uso:
-  python trustpilot_scraper.py --url "https://es.trustpilot.com/review/www.dhl.es" --out dhl_trustpilot.csv
-  # Si la página inyecta reseñas con JS:
-  python trustpilot_scraper.py --url "https://es.trustpilot.com/review/www.dhl.es" --out dhl_trustpilot.csv --playwright
+Resumen
+--------
+Este módulo extrae reseñas públicas desde páginas de Trustpilot y, como
+fallback, desde sitios que sigan microformatos/JSON-LD o patrones comunes
+de reseñas. Prioriza extracción desde JSON-LD y ofrece dos modos de
+obtención de HTML: requests (rápido) y Playwright (para contenido
+inyectado por JavaScript).
 
-Dependencias:
-  - requests
-  - beautifulsoup4
-  - (opcional) lxml             -> parser más robusto; si no está, se usa html.parser
-  - (opcional) playwright       -> para --playwright
-  - (opcional) navegadores: `playwright install` o `playwright install chromium`
+Funcionalidades principales
+---------------------------
+- Parseo de JSON-LD (<script type="application/ld+json">) buscando objetos
+  @type = "Review".
+- Adaptador específico para Trustpilot (selectores data-*) para extraer
+  id, título, cuerpo, valoración, autor, fecha y ubicación.
+- Fallback genérico basado en convenciones (itemprop, itemtype, data-*)
+  para otros sitios.
+- Paginación heurística (rel="next", enlaces textuales, parámetro ?page).
+- Dedupe entre resultados (prioriza ID; si no hay ID, hash autor+fragmento).
+- Guardado en CSV con codificación utf-8-sig (compatible con Excel en Windows).
+
+Salida / Modelo de datos
+------------------------
+Clase dataclass Review con campos (columna CSV con este orden):
+- review_id: Optional[str]
+- title: Optional[str]
+- body: Optional[str]
+- rating: Optional[float]
+- author: Optional[str]
+- date_published: Optional[str]
+- location: Optional[str]
+- source_url: str
+
+CSV: nombre de columnas igual a los atributos de la dataclass.
+
+Uso (CLI)
+---------
+Ejemplos:
+  python web_scrapping.py --url "https://es.trustpilot.com/review/www.dominio" --out reseñas.csv
+  python web_scrapping.py --url "https://es.trustpilot.com/review/www.dominio" --out reseñas.csv --playwright
+
+Opciones principales (resumen)
+- --url           URL de inicio (página de reseñas).
+- --out           Ruta del CSV de salida.
+- --timeout       Timeout por request en segundos.
+- --pause         Pausa entre páginas en segundos.
+- --max-pages     Límite de páginas a recorrer.
+- --user-agent    User-Agent HTTP a usar.
+- --conservative  Si robots.txt no es legible, abortar (modo conservador).
+- --playwright    Usar Playwright (cuando requests no recupera reseñas).
+
+Dependencias
+------------
+- requests
+- beautifulsoup4
+- (opcional) lxml        -> parser más robusto (BeautifulSoup).
+- (opcional) playwright  -> para JavaScript rendering; instalar navegadores:
+                         `playwright install` o `playwright install chromium`.
+
+Instalación rápida
+------------------
+pip install requests beautifulsoup4
+# opcionalmente:
+pip install lxml
+pip install playwright
+playwright install chromium
+
+Consideraciones éticas y legales
+--------------------------------
+- Respeta robots.txt y la política de uso del sitio. El script intenta leer
+  robots.txt; si no se puede leer y no se usa --conservative, el script
+  continúa pero emite un aviso.
+- Este código recolecta contenido público para análisis; no eluda medidas
+  de protección (CAPTCHAs, bloqueos por scraping) ni realices extracción
+  que viole términos de servicio o privacidad.
+- Para estudios académicos, agrega pausas razonables (--pause) y limita
+  el número de páginas (--max-pages).
+
+Comportamiento y decisiones de diseño
+-------------------------------------
+- Se prioriza JSON-LD porque suele contener datos estructurados y estables.
+- Se deduplica entre fuentes (JSON-LD vs DOM) usando una huella:
+  - Si hay review_id, se usa como clave.
+  - Si no, se genera SHA1 de author + primeros 200 caracteres del body.
+- Se filtran CTAs o placeholders (frases como "write your review") para
+  evitar reseñas vacías o botones de escritura.
+- Guardado CSV con utf-8-sig para compatibilidad con Excel en Windows.
+
+Consejos de uso
+---------------
+- Si la página carga reseñas mediante JS (p. ej. contenido dinámico),
+  ejecute con --playwright.
+- Aumente --pause si detecta bloqueos por tasa de peticiones.
+- Si necesita campos adicionales, inspeccione los <script type="application/ld+json">
+  y amplíe extract_from_jsonld o los parsers DOM.
+
+Errores comunes y solución rápida
+--------------------------------
+- "Playwright no está instalado": instale playwright y ejecute `playwright install`.
+- Error de conexión/timeout: aumentar --timeout o revisar conectividad.
+- CSV vacío pero HTML contiene reseñas: probar --playwright si las reseñas se inyectan por JS.
+
+Notas para desarrolladores
+--------------------------
+- Los selectores de Trustpilot pueden cambiar con el tiempo; mantener tests
+  y actualizar find_review_blocks_trustpilot / parse_single_review_trustpilot.
+- Para pruebas unitarias, inyectar HTML de ejemplo y validar extract_from_jsonld,
+  parse_single_review_trustpilot y parse_single_review_generic.
+
+Licencia / Créditos
+-------------------
+Código provisto "tal cual"; revisar compatibilidad de licencia antes de
+uso en proyectos comerciales. Añadir encabezado de licencia si se integra
+en repositorios con requisitos específicos.
+
 """
 
 import argparse
@@ -35,11 +137,11 @@ from bs4 import BeautifulSoup
 # ==========================
 # Configuración predeterminada
 # ==========================
-DEFAULT_START_URL = "https://es.trustpilot.com/review/www.dhl.es"
-DEFAULT_OUTPUT_CSV = "trustpilot_reviews.csv"
+DEFAULT_START_URL = "https://es.trustpilot.com/review/genei.es"
+DEFAULT_OUTPUT_CSV = "review_data/trustpilot_review_genei.es.csv"
 DEFAULT_TIMEOUT = 25
 DEFAULT_PAUSE = 2.0
-DEFAULT_MAX_PAGES = 6000
+DEFAULT_MAX_PAGES = 500
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
