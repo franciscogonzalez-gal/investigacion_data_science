@@ -1,3 +1,50 @@
+"""
+libreria_conexion_big_query.py
+
+Resumen:
+    Utilidades para interactuar con Google BigQuery usando una cuenta de servicio.
+    Funcionalidades principales:
+      - Listar proyectos, datasets y tablas accesibles.
+      - Leer tablas a pandas.DataFrame.
+      - Escribir DataFrame a tablas de BigQuery.
+      - Crear tablas a partir del esquema de un DataFrame.
+      - Normalizar columnas datetime (timezone-unaware).
+
+Requisitos:
+    - python >= 3.8
+    - pandas
+    - google-cloud-bigquery
+    - google-auth
+    - logger_library (proveer setup_logger)
+
+Uso básico:
+    from libreria_conexion_big_query import read_bigquery_to_dataframe
+    df = read_bigquery_to_dataframe(
+        project_id="mi-proyecto",
+        dataset_id="mi_dataset",
+        table_id="mi_tabla",
+        credentials_path="ruta/a/credenciales.json"
+    )
+
+Funciones públicas:
+    - list_projects_datasets_and_tables(json_key_path)
+    - read_bigquery_to_dataframe(project_id, dataset_id, table_id, credentials_path)
+    - write_dataframe_to_bigquery(dataframe, project_id, dataset_id, table_id, credentials_path, if_exists='replace')
+    - create_bigquery_table_from_dataframe(dataframe, dataframe_name, project_id, dataset_id, credentials_path, replace_if_exists=False)
+    - make_datetime_timezone_unaware(df)
+
+Manejo de errores y logging:
+    - Se utiliza setup_logger para registrar actividad y errores.
+    - Errores de la API de Google se registran; las funciones devuelven None o False cuando fallan.
+    - Excepciones críticas y stack traces se registran con logger.debug/critical.
+
+Notas:
+    - Asegurar que el archivo JSON de la cuenta de servicio tenga permisos adecuados para las operaciones requeridas.
+    - Para tablas grandes preferir cargas por lotes o particionado en lugar de leer todo en memoria.
+    - Ajustar políticas de write_disposition según el comportamiento deseado ('replace', 'append', 'fail').
+
+"""
+
 # Import libraries
 import pandas as pd
 from google.cloud import bigquery
@@ -169,11 +216,11 @@ def write_dataframe_to_bigquery(dataframe, project_id, dataset_id, table_id, cre
     return False
 
 
-def create_bigquery_table_from_dataframe(dataframe, dataframe_name, project_id, dataset_id, credentials_path):
+def create_bigquery_table_from_dataframe(dataframe, dataframe_name, project_id, dataset_id, credentials_path, replace_if_exists=False):
     """
     Crea una tabla en BigQuery a partir del esquema de un DataFrame de pandas.
 
-    El nombre de la tabla será igual al nombre proporcionado del DataFrame. Si la tabla ya existe, se lanza un error.
+    El nombre de la tabla será igual al nombre proporcionado del DataFrame.
 
     Parámetros:
         dataframe (pd.DataFrame): DataFrame con la estructura que se usará para crear la tabla.
@@ -181,12 +228,13 @@ def create_bigquery_table_from_dataframe(dataframe, dataframe_name, project_id, 
         project_id (str): ID del proyecto de Google Cloud.
         dataset_id (str): ID del dataset donde se creará la tabla.
         credentials_path (str): Ruta al archivo JSON con las credenciales de la cuenta de servicio.
+        replace_if_exists (bool): Si True y la tabla existe, se eliminará y se creará de nuevo. Por defecto False.
 
     Retorna:
         str: Nombre completo de la tabla creada si fue exitosa.
 
     Lanza:
-        ValueError: Si la tabla ya existe en BigQuery.
+        ValueError: Si la tabla ya existe en BigQuery y replace_if_exists es False.
     """
     logger = setup_logger("create_bigquery_table_from_dataframe")
 
@@ -203,7 +251,17 @@ def create_bigquery_table_from_dataframe(dataframe, dataframe_name, project_id, 
         # Verifica si la tabla ya existe
         try:
             client.get_table(table_ref)
-            raise ValueError(f"La tabla '{table_ref}' ya existe en BigQuery.")
+            # Si se llega aquí la tabla existe
+            if replace_if_exists:
+                logger.info("La tabla '%s' ya existe y replace_if_exists=True. Eliminando la tabla...", table_ref)
+                try:
+                    client.delete_table(table_ref)
+                    logger.info("Tabla '%s' eliminada correctamente.", table_ref)
+                except Exception as del_exc:
+                    logger.error("Error eliminando la tabla '%s': %s", table_ref, del_exc)
+                    raise
+            else:
+                raise ValueError(f"La tabla '{table_ref}' ya existe en BigQuery.")
         except NotFound:
             logger.info("La tabla '%s' no existe. Procediendo a crearla.", table_ref)
 
