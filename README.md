@@ -12,7 +12,7 @@ Este proyecto implementa un **pipeline completo de análisis de reseñas de clie
 El tablero muestra:
 
 * **Distribución de percepción (positiva / negativa)**
-* **Categorías generales y específicas** más frecuentes
+* **Categorías generales y específicas más frecuentes**
 * **Exploración detallada de reseñas clasificadas**
 * **Filtro por compañía o servicio**
 
@@ -30,7 +30,17 @@ Este flujo automatizado transforma reseñas de clientes en **información estrat
 
 ---
 
-## 📂 Estructura del Repositorio
+## ⚠️ Nota Ética y Legal
+
+El **scraping de Trustpilot** se utilizó **únicamente con fines educativos y de aprendizaje técnico**.
+No se recomienda su uso para operaciones comerciales ni para la toma de decisiones empresariales.
+
+Para fines profesionales, corporativos o de investigación aplicada, se debe **contactar directamente con Trustpilot** y solicitar acceso autorizado a sus **APIs oficiales o fuentes de datos aprobadas**.
+Esto garantiza el cumplimiento de sus **términos de servicio, políticas de privacidad y derechos de uso de contenido**.
+
+---
+
+## 📂 Estructura del Proyecto
 
 ```
 .
@@ -38,6 +48,7 @@ Este flujo automatizado transforma reseñas de clientes en **información estrat
 ├── procesado_resenas.py       # Limpieza y combinación de CSVs
 ├── llm_parse.py               # Clasificación automática con OpenAI GPT
 ├── load_to_bigquery.py        # Carga de resultados en Google BigQuery
+
 ```
 
 ---
@@ -162,4 +173,3 @@ Ingeniero Industrial | Especialista en Análisis de Datos, Calidad y Mejora Cont
 [LinkedIn](https://www.linkedin.com/in/franciscogonzalez/)
 
 Proyecto orientado a la integración de **analítica avanzada y automatización de procesos de calidad**, aplicando **Python, LLMs y Business Intelligence** para generar **insights accionables** a partir de reseñas de clientes.
-
