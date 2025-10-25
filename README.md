@@ -16,8 +16,6 @@ El tablero muestra:
 * **Exploración detallada de reseñas clasificadas**
 * **Filtro por compañía o servicio**
 
-![Ejemplo del tablero Power BI](Tablero Analisis.png)
-
 ---
 
 ## ⚙️ Descripción General del Proyecto
