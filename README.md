@@ -16,7 +16,7 @@ El tablero muestra:
 * **Exploración detallada de reseñas clasificadas**
 * **Filtro por compañía o servicio**
 
-![Ejemplo del tablero Power BI](1a103d6b-066b-498a-9192-59bcf9543807.png)
+![Ejemplo del tablero Power BI](Tablero Analisis.png)
 
 ---
 
