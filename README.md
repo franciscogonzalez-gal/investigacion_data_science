@@ -166,10 +166,14 @@ playwright install chromium
 
 ---
 
-## 👤 Autor
+## 👤 Autores
 
 **Francisco González**
 Ingeniero Industrial | Especialista en Análisis de Datos, Calidad y Mejora Continua
 [LinkedIn](https://www.linkedin.com/in/franciscogonzalez/)
+
+**Vincent Martinez**
+Regional Manager Central America & South America - Ingram Micro Miami - Cisco - Cybersecurity - Intelligence - Forensic
+[LinkedIn](https://www.linkedin.com/in/vincentmart%C3%ADnez/)
 
 Proyecto orientado a la integración de **analítica avanzada y automatización de procesos de calidad**, aplicando **Python, LLMs y Business Intelligence** para generar **insights accionables** a partir de reseñas de clientes.
