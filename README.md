@@ -148,6 +148,7 @@ graph TD
 ## 🧰 Requisitos Técnicos
 
 **Versión recomendada:** Python 3.11+
+
 **Instalación de dependencias:**
 
 
