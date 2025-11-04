@@ -150,10 +150,25 @@ graph TD
 **Versión recomendada:** Python 3.8+
 **Instalación de dependencias:**
 
+
+Crea el entorno con:
+
 ```bash
-pip install requests beautifulsoup4 lxml playwright pandas openpyxl openai python-dotenv google-cloud-bigquery
+conda env create -f environment.yml
+```
+
+Activa el entorno:
+
+```bash
+conda activate mi_entorno
+```
+
+Finalmente, instala el navegador para Playwright (una vez dentro del entorno):
+
+```bash
 playwright install chromium
 ```
+
 
 ---
 
