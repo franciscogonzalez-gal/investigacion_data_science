@@ -133,12 +133,18 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    sync_playwright = None  # type: ignore
 
 # ==========================
 # Configuración predeterminada
 # ==========================
-DEFAULT_START_URL = "https://es.trustpilot.com/review/genei.es"
-DEFAULT_OUTPUT_CSV = "review_data/trustpilot_review_genei.es.csv"
+DEFAULT_START_URL = "https://es.trustpilot.com/review/sending.es"
+DEFAULT_OUTPUT_CSV = "review_data/trustpilot_reviews_sending.es.csv"
 DEFAULT_TIMEOUT = 25
 DEFAULT_PAUSE = 2.0
 DEFAULT_MAX_PAGES = 500
@@ -606,9 +612,7 @@ def scrape_requests(start_url: str, headers: dict, timeout: int, pause: float, m
 
 
 def scrape_playwright(start_url: str, pause: float, max_pages: int) -> List[Review]:
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
+    if not PLAYWRIGHT_AVAILABLE:
         print("Playwright no está instalado. Instala playwright y ejecuta 'playwright install'.")
         return []
 
