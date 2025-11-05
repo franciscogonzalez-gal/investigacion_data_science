@@ -68,9 +68,11 @@ Licencia / Autor:
 
 import pandas as pd
 import os
-
+from logger_library import setup_logger
 
 def cargar_resenas_csv(carpeta: str) -> dict:
+    logger = setup_logger("cargar_resenas_csv")
+    logger.info(f"Cargando reseñas desde la carpeta: {carpeta}")
     dataframes = {}
     for archivo in os.listdir(carpeta):
         if archivo.endswith(".csv"):
@@ -82,28 +84,38 @@ def cargar_resenas_csv(carpeta: str) -> dict:
             df['company'] = nombre_sin_extension.upper()
             dataframes[nombre_sin_extension] = df
     if not dataframes:
+        logger.error(f"No se encontraron archivos CSV en la carpeta: {carpeta}")
         raise FileNotFoundError(f"No se encontraron archivos CSV en la carpeta: {carpeta}")
     else:
+        logger.info(f"Archivos CSV cargados: {list(dataframes.keys())}")
         data = pd.concat(dataframes.values(), ignore_index=True)
     return data
 
 def guardar_resenas_excel(df: pd.DataFrame, ruta_salida: str) -> None:
+    logger = setup_logger("guardar_resenas_excel")
     df.to_excel(ruta_salida, index=False)
-    print(f"Reseñas guardadas en: {ruta_salida}")
+    logger.info(f"Reseñas guardadas en: {ruta_salida}")
     
 #guadar las resenas en CSV
 def guardar_resenas_csv(df: pd.DataFrame, ruta_salida: str) -> None:
+    logger = setup_logger("guardar_resenas_csv")
     df.to_csv(ruta_salida, index=False)
-    print(f"Reseñas guardadas en: {ruta_salida}")
+    logger.info(f"Reseñas guardadas en: {ruta_salida}")
 
 def main():
+    logger = setup_logger("procesado_resenas")
     carpeta_entrada = "review_data"
     # Cargar reseñas desde CSVs
+    logger.info("Cargando reseñas desde CSV...")
     df_resenas = cargar_resenas_csv(carpeta_entrada)
     
     #eliminar las filas de la compania SAMPLE
     df_resenas = df_resenas[df_resenas['company'] != 'SAMPLE']
 
+    df_resenas.dropna(subset=['review_id'],inplace=True)
+    
+    df_resenas.drop_duplicates(subset=['review_id'],inplace=True)
+    
     # Guardar reseñas en un archivo Excel
     guardar_resenas_excel(df_resenas, "output/resenas_combinadas.xlsx")
     

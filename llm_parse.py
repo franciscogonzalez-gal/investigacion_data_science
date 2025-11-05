@@ -114,6 +114,8 @@ import pandas as pd
 from typing import Dict, Any
 from dotenv import load_dotenv
 from openai import OpenAI
+from logger_library import setup_logger
+
 load_dotenv()
 # -----------------------------
 # Configuración
@@ -312,6 +314,7 @@ def validate_fields(d: Dict[str, Any]) -> None:
 # -----------------------------
 def main():
     # Cargar reseñas
+    logger = setup_logger("llm_parse")
     if not os.path.exists(INPUT_CSV):
         raise FileNotFoundError(f"No se encontró el CSV de entrada: {INPUT_CSV}")
 
@@ -329,9 +332,9 @@ def main():
 
         try:
             data = call_openai_json(review_text, client)
-            print(f"Fila {idx} (ID: {row.get(ID_COLUMN, 'N/A')}): Clasificada correctamente.")
+            logger.info(f"Fila {idx} (ID: {row.get(ID_COLUMN, 'N/A')}): Clasificada correctamente.")
         except Exception as e:
-            print(f"Error en fila {idx} (ID: {row.get(ID_COLUMN, 'N/A')}): {e}")
+            logger.info(f"Error en fila {idx} (ID: {row.get(ID_COLUMN, 'N/A')}): {e}")
             # Si algo falla, registramos un resultado con error para que no se pierda la fila
             data = {
                 "sentiment_label": None,
@@ -361,7 +364,7 @@ def main():
 
     # Guardar a Excel (openpyxl)
     out_df.to_excel(OUTPUT_XLSX, index=False)
-    print(f"Listo. Guardado en: {OUTPUT_XLSX}\nFilas: {len(out_df)}")
+    logger.info(f"Listo. Guardado en: {OUTPUT_XLSX}\nFilas: {len(out_df)}")
     
    
 

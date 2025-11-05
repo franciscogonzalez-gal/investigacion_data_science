@@ -129,7 +129,7 @@ from dataclasses import dataclass, asdict
 from typing import List, Optional
 from urllib import robotparser
 from urllib.parse import urlparse
-
+from logger_library import setup_logger
 import requests
 from bs4 import BeautifulSoup
 
@@ -200,6 +200,7 @@ def is_allowed(url: str, user_agent: str, abort_if_unreachable: bool) -> bool:
       - si abort_if_unreachable=True => devuelve False (abortará)
       - si abort_if_unreachable=False => avisa y devuelve True (continúa)
     """
+    logger = setup_logger("is_allowed")
     try:
         parsed = urllib.parse.urlparse(url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
@@ -208,16 +209,16 @@ def is_allowed(url: str, user_agent: str, abort_if_unreachable: bool) -> bool:
         rp.read()
         allowed = rp.can_fetch(user_agent, url)
         if allowed is None:
-            print(f"Aviso: robots.txt no dio veredicto para {url}. Continuaré con cortesía (pausas, UA).")
+            logger.warning(f"Aviso: robots.txt no dio veredicto para {url}. Continuaré con cortesía (pausas, UA).")
             return True
         return bool(allowed)
     except Exception as e:
         msg = f"Aviso: no se pudo leer robots.txt ({e!r})."
         if abort_if_unreachable:
-            print(msg + " Abortando por configuración conservadora (--conservative).")
+            logger.warning(msg + " Abortando por configuración conservadora (--conservative).")
             return False
         else:
-            print(msg + " Continuaré bajo tu responsabilidad.")
+            logger.warning(msg + " Continuaré bajo tu responsabilidad.")
             return True
 
 
@@ -572,13 +573,13 @@ def scrape_requests(start_url: str, headers: dict, timeout: int, pause: float, m
     url = start_url
     pages = 0
     is_tp = _is_trustpilot(url)
-
+    logger = setup_logger("scrape_requests")
     while url and pages < max_pages:
         if url in visited:
             break
         visited.add(url)
 
-        print(f"Descargando: {url}")
+        logger.info(f"Descargando: {url}")
         soup = get_soup(url, headers=headers, timeout=timeout)
 
         # 0) JSON-LD primero
@@ -612,8 +613,9 @@ def scrape_requests(start_url: str, headers: dict, timeout: int, pause: float, m
 
 
 def scrape_playwright(start_url: str, pause: float, max_pages: int) -> List[Review]:
+    logger = setup_logger("scrape_playwright")
     if not PLAYWRIGHT_AVAILABLE:
-        print("Playwright no está instalado. Instala playwright y ejecuta 'playwright install'.")
+        logger.warning("Playwright no está instalado. Instala playwright y ejecuta 'playwright install'.")
         return []
 
     reviews: List[Review] = []
@@ -632,7 +634,7 @@ def scrape_playwright(start_url: str, pause: float, max_pages: int) -> List[Revi
                 break
             visited.add(url)
 
-            print(f"Cargando (Playwright): {url}")
+            logger.info(f"Cargando (Playwright): {url}")
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(1500)
 
@@ -718,6 +720,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main():
+    logger = setup_logger("web_scrapping")
     args = parse_args()
 
     headers = {
@@ -728,8 +731,8 @@ def main():
     # Verificación robots.txt
     allowed = is_allowed(args.url, user_agent=args.user_agent, abort_if_unreachable=args.conservative)
     if not allowed:
-        print("El scraping a esta ruta no está permitido según robots.txt o política local.")
-        print("Se cotinuará por cuenta y riesgo del usuario.")
+        logger.warning("El scraping a esta ruta no está permitido según robots.txt o política local.")
+        logger.warning("Se cotinuará por cuenta y riesgo del usuario.")
 
     # Scraping con requests
     reviews = scrape_requests(
@@ -742,7 +745,7 @@ def main():
 
     # Fallback con Playwright si se indicó y no se obtuvo nada
     if not reviews and args.playwright:
-        print("No se obtuvieron reseñas con requests. Probando con Playwright...")
+        logger.info("No se obtuvieron reseñas con requests. Probando con Playwright...")
         reviews = scrape_playwright(
             start_url=args.url,
             pause=args.pause,
@@ -752,9 +755,9 @@ def main():
     # Deduplicar y limpiar
     reviews = dedup_and_prune(reviews)
 
-    print(f"Total de reseñas recolectadas: {len(reviews)}")
+    logger.info(f"Total de reseñas recolectadas: {len(reviews)}")
     save_csv(reviews, args.out)
-    print(f"CSV guardado en: {args.out}")
+    logger.info(f"CSV guardado en: {args.out}")
 
 
 if __name__ == "__main__":
