@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """Scraper de reseñas orientado a Trustpilot (archivo principal).
 
+Autores
+-------
+Francisco Gonzalez
+Vincent Martinez
+
 Resumen
 --------
 Este módulo extrae reseñas públicas desde páginas de Trustpilot y, como
@@ -162,6 +167,27 @@ SKIP_PHRASES = {"write your review", "escribe tu reseña", "escribe tu review"}
 # ==========================
 @dataclass
 class Review:
+    """Modelo de datos para almacenar información de una reseña.
+    
+    Attributes
+    ----------
+    review_id : Optional[str]
+        Identificador único de la reseña (si está disponible).
+    title : Optional[str]
+        Título de la reseña.
+    body : Optional[str]
+        Cuerpo o contenido principal de la reseña.
+    rating : Optional[float]
+        Valoración numérica (ej. 1.0 a 5.0).
+    author : Optional[str]
+        Nombre del autor de la reseña.
+    date_published : Optional[str]
+        Fecha de publicación en formato ISO u otro formato encontrado.
+    location : Optional[str]
+        Ubicación geográfica del autor (si está disponible).
+    source_url : str
+        URL de la página donde se encontró la reseña.
+    """
     review_id: Optional[str]
     title: Optional[str]
     body: Optional[str]
@@ -176,10 +202,36 @@ class Review:
 # Utilidades generales
 # ==========================
 def text_or_none(el) -> Optional[str]:
+    """Extrae texto de un elemento BeautifulSoup o retorna None.
+    
+    Parameters
+    ----------
+    el : Tag or None
+        Elemento BeautifulSoup del cual extraer texto.
+    
+    Returns
+    -------
+    Optional[str]
+        Texto extraído con espacios eliminados, o None si el elemento es None.
+    """
     return el.get_text(strip=True) if el else None
 
 
 def first_attr(el, attr) -> Optional[str]:
+    """Obtiene el valor de un atributo HTML de un elemento.
+    
+    Parameters
+    ----------
+    el : Tag or None
+        Elemento BeautifulSoup.
+    attr : str
+        Nombre del atributo a extraer.
+    
+    Returns
+    -------
+    Optional[str]
+        Valor del atributo o None si no existe o el elemento es None.
+    """
     if not el:
         return None
     val = el.get(attr)
@@ -187,7 +239,21 @@ def first_attr(el, attr) -> Optional[str]:
 
 
 def preferred_soup(html: str) -> BeautifulSoup:
-    """Usa lxml si está disponible; si no, cae a html.parser."""
+    """Crea un objeto BeautifulSoup usando el mejor parser disponible.
+    
+    Intenta usar lxml (más rápido y robusto) como primera opción.
+    Si lxml no está disponible, utiliza html.parser (incluido en Python).
+    
+    Parameters
+    ----------
+    html : str
+        Código HTML a parsear.
+    
+    Returns
+    -------
+    BeautifulSoup
+        Objeto BeautifulSoup listo para navegar el DOM.
+    """
     try:
         return BeautifulSoup(html, "lxml")
     except Exception:
@@ -195,10 +261,25 @@ def preferred_soup(html: str) -> BeautifulSoup:
 
 
 def is_allowed(url: str, user_agent: str, abort_if_unreachable: bool) -> bool:
-    """
-    Devuelve True si robots.txt permite la ruta. Si no se puede leer robots.txt:
-      - si abort_if_unreachable=True => devuelve False (abortará)
-      - si abort_if_unreachable=False => avisa y devuelve True (continúa)
+    """Verifica si robots.txt permite el scraping de una URL.
+    
+    Consulta el archivo robots.txt del sitio y determina si el User-Agent
+    especificado tiene permiso para acceder a la URL.
+    
+    Parameters
+    ----------
+    url : str
+        URL completa a verificar.
+    user_agent : str
+        User-Agent que se usará para la verificación.
+    abort_if_unreachable : bool
+        Si True y robots.txt no es accesible, retorna False (modo conservador).
+        Si False y robots.txt no es accesible, retorna True con advertencia.
+    
+    Returns
+    -------
+    bool
+        True si el acceso está permitido, False en caso contrario.
     """
     logger = setup_logger("is_allowed")
     try:
@@ -223,16 +304,64 @@ def is_allowed(url: str, user_agent: str, abort_if_unreachable: bool) -> bool:
 
 
 def get_soup(url: str, headers: dict, timeout: int) -> BeautifulSoup:
+    """Descarga HTML de una URL y retorna objeto BeautifulSoup.
+    
+    Parameters
+    ----------
+    url : str
+        URL a descargar.
+    headers : dict
+        Diccionario de encabezados HTTP (ej. User-Agent).
+    timeout : int
+        Tiempo máximo de espera en segundos.
+    
+    Returns
+    -------
+    BeautifulSoup
+        Objeto BeautifulSoup del contenido descargado.
+    
+    Raises
+    ------
+    requests.HTTPError
+        Si la respuesta HTTP tiene código de error.
+    """
     resp = requests.get(url, headers=headers, timeout=timeout)
     resp.raise_for_status()
     return preferred_soup(resp.text)
 
 
 def _norm(s):
+    """Normaliza una cadena eliminando espacios al inicio y final.
+    
+    Parameters
+    ----------
+    s : str or None
+        Cadena a normalizar.
+    
+    Returns
+    -------
+    str
+        Cadena normalizada, o cadena vacía si s es None.
+    """
     return (s or "").strip()
 
 
 def normalize_text(s: str | None) -> str | None:
+    """Normaliza texto eliminando espacios múltiples y caracteres especiales.
+    
+    Reemplaza espacios no-separables (\u00A0) por espacios normales,
+    colapsa múltiples espacios en uno solo, y elimina espacios al inicio/final.
+    
+    Parameters
+    ----------
+    s : str or None
+        Texto a normalizar.
+    
+    Returns
+    -------
+    str or None
+        Texto normalizado, o None si la entrada es None o queda vacía.
+    """
     if not s:
         return None
     s = s.replace("\u00A0", " ")
@@ -241,10 +370,21 @@ def normalize_text(s: str | None) -> str | None:
 
 
 def clean_trustpilot_review_id(raw: str | None) -> str | None:
-    """
-    Trustpilot JSON-LD trae URLs del tipo:
+    """Extrae ID limpio desde URLs de Trustpilot en formato JSON-LD.
+    
+    Trustpilot JSON-LD incluye URLs en formato:
     https://www.trustpilot.com/#/schema/Review/www.dominio/<ID>
-    Extrae <ID>. Si no coincide, devuelve el original.
+    Esta función extrae únicamente el <ID>.
+    
+    Parameters
+    ----------
+    raw : str or None
+        URL completa o ID parcial de la reseña.
+    
+    Returns
+    -------
+    str or None
+        ID extraído, URL original si no coincide el patrón, o None si raw es None.
     """
     if not raw:
         return None
@@ -253,8 +393,20 @@ def clean_trustpilot_review_id(raw: str | None) -> str | None:
 
 
 def fingerprint_review(r: Review) -> str:
-    """
-    Huella para deduplicar: prioriza ID; en su defecto, hash de autor+primeros 200 chars del body.
+    """Genera una huella única para identificar y deduplicar reseñas.
+    
+    Prioriza el review_id si está disponible. Si no existe ID,
+    genera un hash SHA1 basado en autor + primeros 200 caracteres del cuerpo.
+    
+    Parameters
+    ----------
+    r : Review
+        Objeto Review a identificar.
+    
+    Returns
+    -------
+    str
+        Huella única en formato 'id::<ID>' o 'ab::<hash>'.
     """
     if r.review_id:
         return f"id::{r.review_id}"
@@ -265,6 +417,18 @@ def fingerprint_review(r: Review) -> str:
 
 
 def _is_trustpilot(url: str) -> bool:
+    """Detecta si una URL pertenece al dominio de Trustpilot.
+    
+    Parameters
+    ----------
+    url : str
+        URL a verificar.
+    
+    Returns
+    -------
+    bool
+        True si la URL es de Trustpilot, False en caso contrario.
+    """  
     host = urlparse(url).netloc.lower()
     return "trustpilot." in host
 
@@ -273,9 +437,22 @@ def _is_trustpilot(url: str) -> bool:
 # Extracción desde JSON-LD
 # ==========================
 def extract_from_jsonld(soup: BeautifulSoup, page_url: str) -> List[Review]:
-    """
-    Lee todos los <script type="application/ld+json">,
-    busca objetos @type=Review (directos o anidados) y los convierte a Review.
+    """Extrae reseñas desde etiquetas <script type="application/ld+json">.
+    
+    Busca todos los bloques JSON-LD en la página, identifica objetos
+    con @type="Review" (directos o anidados), y los convierte a objetos Review.
+    
+    Parameters
+    ----------
+    soup : BeautifulSoup
+        Objeto BeautifulSoup de la página HTML.
+    page_url : str
+        URL de la página actual (se almacena en source_url).
+    
+    Returns
+    -------
+    List[Review]
+        Lista de objetos Review extraídos del JSON-LD.
     """
     found: List[Review] = []
     scripts = soup.find_all("script", attrs={"type": "application/ld+json"})
@@ -342,8 +519,20 @@ def extract_from_jsonld(soup: BeautifulSoup, page_url: str) -> List[Review]:
 # Adaptador Trustpilot (DOM)
 # ==========================
 def find_review_blocks_trustpilot(soup: BeautifulSoup):
-    """
-    Trustpilot marca cada reseña con atributos data-* y clases relativamente estables.
+    """Encuentra bloques de reseñas en páginas de Trustpilot mediante selectores DOM.
+    
+    Utiliza atributos data-* específicos de Trustpilot para identificar
+    contenedores de reseñas. Deduplica bloques usando identidad de objeto.
+    
+    Parameters
+    ----------
+    soup : BeautifulSoup
+        Objeto BeautifulSoup de la página HTML de Trustpilot.
+    
+    Returns
+    -------
+    list
+        Lista de elementos Tag de BeautifulSoup, cada uno representando una reseña.
     """
     blocks = []
     blocks.extend(soup.select("[data-service-review-id]"))
@@ -362,8 +551,22 @@ def find_review_blocks_trustpilot(soup: BeautifulSoup):
 
 
 def parse_single_review_trustpilot(block, page_url: str) -> Review:
-    """
-    Extrae campos desde un bloque de reseña en Trustpilot.
+    """Extrae datos de una reseña individual de Trustpilot desde un bloque DOM.
+    
+    Parsea selectores específicos de Trustpilot para extraer: ID, título,
+    cuerpo, valoración, autor, fecha de publicación y ubicación.
+    
+    Parameters
+    ----------
+    block : Tag
+        Elemento BeautifulSoup que contiene una reseña completa.
+    page_url : str
+        URL de origen (se almacena en source_url).
+    
+    Returns
+    -------
+    Review
+        Objeto Review con los datos extraídos.
     """
     # ID
     review_id = (
@@ -449,6 +652,22 @@ def parse_single_review_trustpilot(block, page_url: str) -> Review:
 # Fallback genérico DOM (por si reusas el script para otros sitios)
 # ==========================
 def find_review_blocks_generic(soup: BeautifulSoup):
+    """Encuentra bloques de reseñas en sitios genéricos usando patrones comunes.
+    
+    Utiliza microformatos (itemprop, itemtype), atributos data-review-id,
+    y patrones de ID para identificar reseñas. Filtra bloques vacíos o
+    que contienen frases de llamada a la acción (CTAs).
+    
+    Parameters
+    ----------
+    soup : BeautifulSoup
+        Objeto BeautifulSoup de la página HTML.
+    
+    Returns
+    -------
+    list
+        Lista de elementos Tag que probablemente contienen reseñas.
+    """
     blocks = []
     blocks.extend(soup.find_all(attrs={"itemprop": "review"}))
     blocks.extend(soup.find_all(attrs={"itemtype": re.compile(r"/Review$", re.I)}))
@@ -480,6 +699,23 @@ def find_review_blocks_generic(soup: BeautifulSoup):
 
 
 def parse_single_review_generic(block, page_url: str) -> Review:
+    """Extrae datos de una reseña desde un bloque genérico usando microformatos.
+    
+    Utiliza atributos itemprop estándar (name, description, ratingValue, etc.)
+    y patrones comunes de clases CSS para extraer información de la reseña.
+    
+    Parameters
+    ----------
+    block : Tag
+        Elemento BeautifulSoup que contiene una reseña.
+    page_url : str
+        URL de origen (se almacena en source_url).
+    
+    Returns
+    -------
+    Review
+        Objeto Review con los datos extraídos.
+    """
     review_id = None
     if hasattr(block, "attrs"):
         if "data-review-id" in block.attrs:
@@ -544,6 +780,25 @@ def parse_single_review_generic(block, page_url: str) -> Review:
 # Paginación
 # ==========================
 def find_next_page_url(soup: BeautifulSoup, current_url: str) -> Optional[str]:
+    """Identifica la URL de la siguiente página de reseñas.
+    
+    Implementa tres estrategias heurísticas en orden:
+    1. Busca enlaces con atributo rel="next"
+    2. Busca enlaces con texto como "next", "siguiente", etc.
+    3. Incrementa parámetro ?page=N en la URL actual
+    
+    Parameters
+    ----------
+    soup : BeautifulSoup
+        Objeto BeautifulSoup de la página actual.
+    current_url : str
+        URL de la página actual.
+    
+    Returns
+    -------
+    Optional[str]
+        URL absoluta de la siguiente página, o None si no se encuentra.
+    """
     # rel="next"
     link = soup.find("a", rel=lambda v: v and "next" in v.lower())
     if link and link.get("href"):
@@ -568,6 +823,30 @@ def find_next_page_url(soup: BeautifulSoup, current_url: str) -> Optional[str]:
 # Scrapers
 # ==========================
 def scrape_requests(start_url: str, headers: dict, timeout: int, pause: float, max_pages: int) -> List[Review]:
+    """Realiza scraping de reseñas usando la biblioteca requests.
+    
+    Método rápido y ligero para sitios que no requieren JavaScript.
+    Extrae reseñas de múltiples páginas siguiendo enlaces de paginación.
+    Combina extracción desde JSON-LD y parseo DOM (Trustpilot o genérico).
+    
+    Parameters
+    ----------
+    start_url : str
+        URL inicial de la página de reseñas.
+    headers : dict
+        Encabezados HTTP a incluir en las solicitudes.
+    timeout : int
+        Timeout en segundos para cada solicitud HTTP.
+    pause : float
+        Pausa en segundos entre solicitudes a páginas consecutivas.
+    max_pages : int
+        Número máximo de páginas a procesar.
+    
+    Returns
+    -------
+    List[Review]
+        Lista de todas las reseñas extraídas (puede contener duplicados).
+    """
     reviews: List[Review] = []
     visited = set()
     url = start_url
@@ -613,6 +892,26 @@ def scrape_requests(start_url: str, headers: dict, timeout: int, pause: float, m
 
 
 def scrape_playwright(start_url: str, pause: float, max_pages: int) -> List[Review]:
+    """Realiza scraping de reseñas usando Playwright (navegador headless).
+    
+    Método más lento pero necesario para sitios que cargan contenido
+    dinámicamente mediante JavaScript. Usa Chromium en modo headless.
+    
+    Parameters
+    ----------
+    start_url : str
+        URL inicial de la página de reseñas.
+    pause : float
+        Pausa en segundos entre navegación de páginas.
+    max_pages : int
+        Número máximo de páginas a procesar.
+    
+    Returns
+    -------
+    List[Review]
+        Lista de todas las reseñas extraídas, o lista vacía si Playwright
+        no está instalado.
+    """
     logger = setup_logger("scrape_playwright")
     if not PLAYWRIGHT_AVAILABLE:
         logger.warning("Playwright no está instalado. Instala playwright y ejecuta 'playwright install'.")
@@ -677,7 +976,22 @@ def scrape_playwright(start_url: str, pause: float, max_pages: int) -> List[Revi
 # Deduplicación y guardado
 # ==========================
 def dedup_and_prune(reviews: List[Review]) -> List[Review]:
-    """Elimina duplicados (JSON-LD vs DOM) y reseñas vacías."""
+    """Elimina duplicados y reseñas vacías de una lista.
+    
+    Utiliza fingerprint_review() para identificar duplicados entre
+    reseñas extraídas de diferentes fuentes (JSON-LD vs DOM).
+    Filtra reseñas que no tienen ningún campo informativo.
+    
+    Parameters
+    ----------
+    reviews : List[Review]
+        Lista de reseñas potencialmente duplicadas.
+    
+    Returns
+    -------
+    List[Review]
+        Lista limpia sin duplicados ni reseñas vacías.
+    """
     seen = set()
     cleaned = []
     for r in reviews:
@@ -692,6 +1006,18 @@ def dedup_and_prune(reviews: List[Review]) -> List[Review]:
 
 
 def save_csv(reviews: List[Review], path: str):
+    """Guarda lista de reseñas en archivo CSV con codificación UTF-8-sig.
+    
+    La codificación utf-8-sig incluye BOM (Byte Order Mark) para
+    compatibilidad con Microsoft Excel en Windows.
+    
+    Parameters
+    ----------
+    reviews : List[Review]
+        Lista de reseñas a guardar.
+    path : str
+        Ruta del archivo CSV de salida.
+    """
     fieldnames = list(asdict(Review(None, None, None, None, None, None, None, "")).keys())
     # utf-8-sig -> Excel en Windows muestra bien tildes/ñ
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
@@ -705,6 +1031,13 @@ def save_csv(reviews: List[Review], path: str):
 # CLI / Main
 # ==========================
 def parse_args() -> argparse.Namespace:
+    """Parsea argumentos de línea de comandos.
+    
+    Returns
+    -------
+    argparse.Namespace
+        Objeto con todos los parámetros configurados desde CLI.
+    """
     ap = argparse.ArgumentParser(description="Scraper de reseñas (Trustpilot).")
     ap.add_argument("--url", default=DEFAULT_START_URL, help="URL de inicio (página de reseñas).")
     ap.add_argument("--out", default=DEFAULT_OUTPUT_CSV, help="Ruta del CSV de salida.")
@@ -720,6 +1053,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def main():
+    """Función principal que orquesta el proceso completo de scraping.
+    
+    Flujo de ejecución:
+    1. Parsea argumentos de línea de comandos
+    2. Verifica permisos en robots.txt
+    3. Intenta scraping con requests
+    4. Si no hay resultados y --playwright está activo, usa Playwright
+    5. Deduplica y limpia resultados
+    6. Guarda reseñas en archivo CSV
+    """
     logger = setup_logger("web_scrapping")
     args = parse_args()
 

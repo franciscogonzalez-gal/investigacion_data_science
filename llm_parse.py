@@ -2,6 +2,15 @@
 """
 llm_parse.py — Clasificación de reseñas usando la Responses API de OpenAI (JSON -> DataFrame -> Excel)
 
+Autores
+-------
+Francisco Gonzalez
+Vincent Martinez
+
+Fecha de creación
+----------------
+2025
+
 Resumen
 -------
 Este módulo procesa un CSV de reseñas (columna por defecto 'body'), envía cada reseña a la Responses API
@@ -226,9 +235,28 @@ Responde siempre con solo JSON con esta estructura:
 # Cliente OpenAI
 # -----------------------------
 def get_openai_client() -> OpenAI:
-    # Carga variables desde un archivo .env en el directorio de trabajo (si existe)
+    """
+    Inicializa y devuelve un cliente de OpenAI configurado.
     
-
+    La función busca la clave API en la variable de entorno OPENAI_API_KEY.
+    Si existe un archivo .env en el directorio de trabajo, las variables se
+    cargan automáticamente mediante load_dotenv().
+    
+    Returns
+    -------
+    OpenAI
+        Cliente de OpenAI configurado y listo para usar.
+    
+    Raises
+    ------
+    RuntimeError
+        Si la variable de entorno OPENAI_API_KEY no está definida.
+    
+    Examples
+    --------
+    >>> client = get_openai_client()
+    >>> # El cliente está listo para hacer llamadas a la API
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("Falta la variable de entorno OPENAI_API_KEY. Añádela en .env o exporta la variable.")
@@ -237,8 +265,48 @@ def get_openai_client() -> OpenAI:
 
 def call_openai_json(review_text: str, client: OpenAI) -> Dict[str, Any]:
     """
-    Llama a la Responses API con system prompt y devuelve un dict con el JSON.
-    Implementa reintentos con backoff y parsing robusto.
+    Llama a la Responses API de OpenAI para clasificar una reseña.
+    
+    Envía el texto de la reseña al modelo especificado en MODEL_NAME junto con
+    el SYSTEM_PROMPT que define el formato de clasificación esperado. Implementa
+    un mecanismo de reintentos con backoff exponencial para manejar errores
+    transitorios de la API.
+    
+    Parameters
+    ----------
+    review_text : str
+        Texto de la reseña a clasificar.
+    client : OpenAI
+        Cliente de OpenAI previamente configurado.
+    
+    Returns
+    -------
+    Dict[str, Any]
+        Diccionario con las claves:
+        - sentiment_label: "Positiva" o "Negativa"
+        - general_category: categoría general de la reseña
+        - specific_category: categoría específica según la polaridad
+    
+    Raises
+    ------
+    RuntimeError
+        Si después de MAX_RETRIES intentos no se obtiene una respuesta válida.
+    ValueError
+        Si la respuesta del modelo no puede parsearse a JSON válido.
+    
+    Notes
+    -----
+    - El backoff inicial es INITIAL_BACKOFF segundos y se duplica en cada
+      reintento hasta un máximo de 30 segundos.
+    - La función intenta parsear la respuesta de forma robusta, extrayendo
+      JSON incluso si viene acompañado de texto adicional.
+    
+    Examples
+    --------
+    >>> client = get_openai_client()
+    >>> result = call_openai_json("Excelente servicio, muy rápido", client)
+    >>> print(result['sentiment_label'])
+    'Positiva'
     """
     last_err = None
     backoff = INITIAL_BACKOFF
@@ -277,7 +345,40 @@ def call_openai_json(review_text: str, client: OpenAI) -> Dict[str, Any]:
 
 def coerce_to_json(s: str) -> Dict[str, Any]:
     """
-    Intenta parsear 's' a JSON. Si viene con texto extra o Markdown, limpia y vuelve a intentar.
+    Convierte una cadena de texto a un diccionario JSON de forma robusta.
+    
+    Intenta parsear el texto directamente como JSON. Si falla, busca el primer
+    bloque {...} en el texto (útil cuando el modelo devuelve JSON envuelto en
+    texto adicional o marcadores Markdown) y lo parsea.
+    
+    Parameters
+    ----------
+    s : str
+        Cadena de texto que debería contener JSON válido.
+    
+    Returns
+    -------
+    Dict[str, Any]
+        Diccionario parseado desde el JSON.
+    
+    Raises
+    ------
+    ValueError
+        Si no se puede extraer ni parsear JSON válido del texto.
+    
+    Notes
+    -----
+    La función implementa múltiples estrategias de parsing:
+    1. Parse directo con json.loads()
+    2. Extracción de primer bloque {...} usando regex
+    3. Si ambos fallan, lanza ValueError con los primeros 300 caracteres
+    
+    Examples
+    --------
+    >>> coerce_to_json('{"sentiment_label": "Positiva"}')
+    {'sentiment_label': 'Positiva'}
+    >>> coerce_to_json('Aquí está el resultado: {"sentiment_label": "Negativa"}')
+    {'sentiment_label': 'Negativa'}
     """
     s = s.strip()
 
@@ -303,6 +404,37 @@ def coerce_to_json(s: str) -> Dict[str, Any]:
 
 
 def validate_fields(d: Dict[str, Any]) -> None:
+    """
+    Valida que un diccionario contenga todos los campos obligatorios.
+    
+    Verifica que el diccionario parseado desde la respuesta del modelo contenga
+    las tres claves requeridas: sentiment_label, general_category y specific_category.
+    
+    Parameters
+    ----------
+    d : Dict[str, Any]
+        Diccionario a validar.
+    
+    Raises
+    ------
+    ValueError
+        Si faltan uno o más campos obligatorios. El mensaje incluye
+        la lista de campos faltantes.
+    
+    Notes
+    -----
+    Esta función no valida los valores de los campos, solo su presencia.
+    
+    Examples
+    --------
+    >>> validate_fields({"sentiment_label": "Positiva", 
+    ...                  "general_category": "Entrega",
+    ...                  "specific_category": "Entrega puntual"})
+    # No lanza excepción
+    
+    >>> validate_fields({"sentiment_label": "Positiva"})
+    ValueError: Faltan campos obligatorios: {'general_category', 'specific_category'}
+    """
     required = {"sentiment_label", "general_category", "specific_category"}
     missing = required - set(d.keys())
     if missing:
@@ -313,6 +445,45 @@ def validate_fields(d: Dict[str, Any]) -> None:
 # Carga CSV, clasificación y guardado
 # -----------------------------
 def main():
+    """
+    Función principal que ejecuta el pipeline completo de clasificación.
+    
+    Ejecuta el proceso completo:
+    1. Carga el CSV de reseñas desde INPUT_CSV
+    2. Valida que exista la columna TEXT_COLUMN
+    3. Inicializa el cliente de OpenAI
+    4. Para cada reseña:
+       - Llama a la API de OpenAI para clasificarla
+       - Maneja errores y registra el resultado
+       - Preserva columnas originales del CSV
+    5. Genera un DataFrame con todos los resultados
+    6. Exporta a Excel en OUTPUT_XLSX
+    
+    Raises
+    ------
+    FileNotFoundError
+        Si el archivo INPUT_CSV no existe.
+    KeyError
+        Si el CSV no contiene la columna TEXT_COLUMN.
+    RuntimeError
+        Si falta la configuración de OPENAI_API_KEY.
+    
+    Notes
+    -----
+    - Las reseñas vacías se omiten del procesamiento.
+    - Si una clasificación falla después de MAX_RETRIES, se registra el error
+      en el resultado pero el proceso continúa con las demás reseñas.
+    - Se preservan columnas adicionales del CSV original: author, rating,
+      date_published, location, source_url, title, company.
+    - El logger registra el progreso y errores durante la ejecución.
+    
+    Examples
+    --------
+    Para ejecutar el script:
+    
+    >>> if __name__ == "__main__":
+    ...     main()
+    """
     # Cargar reseñas
     logger = setup_logger("llm_parse")
     if not os.path.exists(INPUT_CSV):
