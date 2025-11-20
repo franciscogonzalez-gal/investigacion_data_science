@@ -159,3 +159,11 @@ review_data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Power BI files
+*.pbix
+*.pbit
+*.pbids
+*.pbidsc
+*.pbiworkspace
+*.pbitemplate
