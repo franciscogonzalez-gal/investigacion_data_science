@@ -170,7 +170,7 @@ python load_to_bigquery.py
 ## 🔗 Flujo de Trabajo Completo
 
 ```mermaid
-graph TD
+graph LR
     A[web_scrapping.py] --> B[procesado_resenas.py]
     B --> C[llm_parse.py]
     C --> D[load_to_bigquery.py]
