@@ -1,5 +1,13 @@
 # Análisis Automatizado de Reseñas de Clientes con LLM, Power BI y BigQuery
 
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4-412991?style=for-the-badge&logo=openai&logoColor=white)
+![Google Cloud](https://img.shields.io/badge/Google_Cloud-BigQuery-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)
+![Power BI](https://img.shields.io/badge/Power_BI-Dashboard-F2C811?style=for-the-badge&logo=powerbi&logoColor=black)
+![Pandas](https://img.shields.io/badge/Pandas-Data_Processing-150458?style=for-the-badge&logo=pandas&logoColor=white)
+![Playwright](https://img.shields.io/badge/Playwright-Web_Scraping-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)
+![Conda](https://img.shields.io/badge/Conda-Environment-44A833?style=for-the-badge&logo=anaconda&logoColor=white)
+
 Este proyecto implementa un **pipeline completo de análisis de reseñas de clientes**, que abarca desde la **extracción automática de datos desde Trustpilot** hasta la **clasificación semántica con modelos de lenguaje (LLM)** y la **visualización de resultados en Power BI** conectada a **Google BigQuery**.
 
 ---
@@ -170,12 +178,13 @@ python load_to_bigquery.py
 ## 🔗 Flujo de Trabajo Completo
 
 ```mermaid
-graph LR
-    A[web_scrapping.py] --> B[procesado_resenas.py]
-    B --> C[llm_parse.py]
-    C --> D[load_to_bigquery.py]
-    D --> E[(BigQuery)]
-    E --> F[Power BI Dashboard]
+graph TD
+    A[🕷️ web_scrapping.py<br/>Extracción de Reseñas] 
+    A --> B[🧹 procesado_resenas.py<br/>Limpieza y Consolidación]
+    B --> C[🤖 llm_parse.py<br/>Clasificación con GPT]
+    C --> D[☁️ load_to_bigquery.py<br/>Carga a la Nube]
+    D --> E[(📊 BigQuery<br/>Data Warehouse)]
+    E --> F[📈 Power BI Dashboard<br/>Visualización]
 ```
 
 ---
