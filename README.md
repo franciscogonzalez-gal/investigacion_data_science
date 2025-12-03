@@ -178,7 +178,7 @@ python load_to_bigquery.py
 ## 🔗 Flujo de Trabajo Completo
 
 ```mermaid
-graph RL
+graph LR
     A[🕷️ web_scrapping.py<br/>Extracción de Reseñas] 
     A --> B[🧹 procesado_resenas.py<br/>Limpieza y Consolidación]
     B --> C[🤖 llm_parse.py<br/>Clasificación con GPT]
