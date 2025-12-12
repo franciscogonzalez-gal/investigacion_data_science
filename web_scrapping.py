@@ -45,6 +45,7 @@ Uso (CLI)
 Ejemplos:
   python web_scrapping.py --url "https://es.trustpilot.com/review/www.dominio" --out reseñas.csv
   python web_scrapping.py --url "https://es.trustpilot.com/review/www.dominio" --out reseñas.csv --playwright
+    python web_scrapping.py --url "https://es.trustpilot.com/review/www.dominio" --out reseñas.csv --max-reviews 200
 
 Opciones principales (resumen)
 - --url           URL de inicio (página de reseñas).
@@ -52,6 +53,7 @@ Opciones principales (resumen)
 - --timeout       Timeout por request en segundos.
 - --pause         Pausa entre páginas en segundos.
 - --max-pages     Límite de páginas a recorrer.
+- --max-reviews   Límite de reseñas (deduplicadas) a recolectar.
 - --user-agent    User-Agent HTTP a usar.
 - --conservative  Si robots.txt no es legible, abortar (modo conservador).
 - --playwright    Usar Playwright (cuando requests no recupera reseñas).
@@ -154,6 +156,7 @@ DEFAULT_OUTPUT_CSV: str | None = None  # si no se especifica, se calcula desde l
 DEFAULT_TIMEOUT = 25
 DEFAULT_PAUSE = 2.0
 DEFAULT_MAX_PAGES = 500
+DEFAULT_MAX_REVIEWS: int | None = None
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -471,6 +474,10 @@ def trustpilot_review_url(company_or_url: str) -> str:
         return DEFAULT_START_URL
     if re.match(r"^https?://", s, flags=re.I):
         return s
+    # Heurística: si viene un identificador corto (p.ej. "dhl"), muchos perfiles
+    # en Trustpilot suelen usar el dominio www.<nombre>.com.
+    if "." not in s and "/" not in s and "\\" not in s:
+        s = f"www.{s}.com"
     return f"https://es.trustpilot.com/review/{s}"
 
 
@@ -884,7 +891,37 @@ def find_next_page_url(soup: BeautifulSoup, current_url: str) -> Optional[str]:
 # ==========================
 # Scrapers
 # ==========================
-def scrape_requests(start_url: str, headers: dict, timeout: int, pause: float, max_pages: int) -> List[Review]:
+def _maybe_append_review(
+    out: List[Review],
+    seen: set[str],
+    r: Review,
+    max_reviews: int | None,
+) -> bool:
+    """Agrega reseña si aporta datos y no es duplicada.
+
+    Returns
+    -------
+    bool
+        True si al agregar se alcanzó el límite ``max_reviews``.
+    """
+    if not any([r.title, r.body, r.rating, r.author, r.date_published]):
+        return False
+    key = fingerprint_review(r)
+    if key in seen:
+        return False
+    seen.add(key)
+    out.append(r)
+    return bool(max_reviews is not None and len(out) >= max_reviews)
+
+
+def scrape_requests(
+    start_url: str,
+    headers: dict,
+    timeout: int,
+    pause: float,
+    max_pages: int,
+    max_reviews: int | None = None,
+) -> List[Review]:
     """Realiza scraping de reseñas usando la biblioteca requests.
     
     Método rápido y ligero para sitios que no requieren JavaScript.
@@ -903,6 +940,9 @@ def scrape_requests(start_url: str, headers: dict, timeout: int, pause: float, m
         Pausa en segundos entre solicitudes a páginas consecutivas.
     max_pages : int
         Número máximo de páginas a procesar.
+    max_reviews : int | None, default=None
+        Límite máximo de reseñas (deduplicadas) a recolectar. Si es ``None``,
+        no se aplica límite.
     
     Returns
     -------
@@ -910,37 +950,49 @@ def scrape_requests(start_url: str, headers: dict, timeout: int, pause: float, m
         Lista de todas las reseñas extraídas (puede contener duplicados).
     """
     reviews: List[Review] = []
+    seen_keys: set[str] = set()
     visited = set()
     url = start_url
     pages = 0
     is_tp = _is_trustpilot(url)
     logger = setup_logger("scrape_requests")
+
+    if max_reviews is not None and max_reviews < 1:
+        raise ValueError("max_reviews debe ser >= 1")
     while url and pages < max_pages:
         if url in visited:
             break
         visited.add(url)
 
         logger.info(f"Descargando: {url}")
-        soup = get_soup(url, headers=headers, timeout=timeout)
+        try:
+            soup = get_soup(url, headers=headers, timeout=timeout)
+        except requests.exceptions.HTTPError as ex:
+            logger.warning(f"No se pudo descargar (HTTPError): {url} -> {ex}")
+            break
+        except requests.exceptions.RequestException as ex:
+            logger.warning(f"No se pudo descargar (RequestException): {url} -> {ex}")
+            break
 
         # 0) JSON-LD primero
         jsonld_reviews = extract_from_jsonld(soup, page_url=url)
         for r in jsonld_reviews:
-            reviews.append(r)
+            if _maybe_append_review(reviews, seen_keys, r, max_reviews):
+                return reviews
 
         # 1) DOM
         if is_tp:
             blocks = find_review_blocks_trustpilot(soup)
             for b in blocks:
                 r = parse_single_review_trustpilot(b, page_url=url)
-                if any([r.title, r.body, r.rating, r.author, r.date_published]):
-                    reviews.append(r)
+                if _maybe_append_review(reviews, seen_keys, r, max_reviews):
+                    return reviews
         else:
             blocks = find_review_blocks_generic(soup)
             for b in blocks:
                 r = parse_single_review_generic(b, page_url=url)
-                if any([r.title, r.body, r.rating, r.author, r.date_published]):
-                    reviews.append(r)
+                if _maybe_append_review(reviews, seen_keys, r, max_reviews):
+                    return reviews
 
         candidate_next = find_next_page_url(soup, url)
         if not candidate_next or candidate_next in visited:
@@ -953,7 +1005,12 @@ def scrape_requests(start_url: str, headers: dict, timeout: int, pause: float, m
     return reviews
 
 
-def scrape_playwright(start_url: str, pause: float, max_pages: int) -> List[Review]:
+def scrape_playwright(
+    start_url: str,
+    pause: float,
+    max_pages: int,
+    max_reviews: int | None = None,
+) -> List[Review]:
     """Realiza scraping de reseñas usando Playwright (navegador headless).
     
     Método más lento pero necesario para sitios que cargan contenido
@@ -967,6 +1024,9 @@ def scrape_playwright(start_url: str, pause: float, max_pages: int) -> List[Revi
         Pausa en segundos entre navegación de páginas.
     max_pages : int
         Número máximo de páginas a procesar.
+    max_reviews : int | None, default=None
+        Límite máximo de reseñas (deduplicadas) a recolectar. Si es ``None``,
+        no se aplica límite.
     
     Returns
     -------
@@ -980,10 +1040,14 @@ def scrape_playwright(start_url: str, pause: float, max_pages: int) -> List[Revi
         return []
 
     reviews: List[Review] = []
+    seen_keys: set[str] = set()
     visited = set()
     url = start_url
     pages = 0
     is_tp = _is_trustpilot(url)
+
+    if max_reviews is not None and max_reviews < 1:
+        raise ValueError("max_reviews debe ser >= 1")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -1005,21 +1069,25 @@ def scrape_playwright(start_url: str, pause: float, max_pages: int) -> List[Revi
             # 0) JSON-LD
             jsonld_reviews = extract_from_jsonld(soup, page_url=url)
             for r in jsonld_reviews:
-                reviews.append(r)
+                if _maybe_append_review(reviews, seen_keys, r, max_reviews):
+                    browser.close()
+                    return reviews
 
             # 1) DOM
             if is_tp:
                 blocks = find_review_blocks_trustpilot(soup)
                 for b in blocks:
                     r = parse_single_review_trustpilot(b, page_url=url)
-                    if any([r.title, r.body, r.rating, r.author, r.date_published]):
-                        reviews.append(r)
+                    if _maybe_append_review(reviews, seen_keys, r, max_reviews):
+                        browser.close()
+                        return reviews
             else:
                 blocks = find_review_blocks_generic(soup)
                 for b in blocks:
                     r = parse_single_review_generic(b, page_url=url)
-                    if any([r.title, r.body, r.rating, r.author, r.date_published]):
-                        reviews.append(r)
+                    if _maybe_append_review(reviews, seen_keys, r, max_reviews):
+                        browser.close()
+                        return reviews
 
             candidate_next = find_next_page_url(soup, url)
             if not candidate_next or candidate_next in visited:
@@ -1113,6 +1181,12 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="Timeout por request (s).")
     ap.add_argument("--pause", type=float, default=DEFAULT_PAUSE, help="Pausa entre páginas (s).")
     ap.add_argument("--max-pages", type=int, default=DEFAULT_MAX_PAGES, help="Límite de páginas a recorrer.")
+    ap.add_argument(
+        "--max-reviews",
+        type=int,
+        default=DEFAULT_MAX_REVIEWS,
+        help="Límite de reseñas (deduplicadas) a recolectar. Si se omite, sin límite.",
+    )
     ap.add_argument("--user-agent", default=DEFAULT_UA, help="User-Agent HTTP.")
     ap.add_argument("--conservative", action="store_true",
                     help="Si robots.txt no es legible, abortar (modo conservador). Por defecto, continuar.")
@@ -1121,7 +1195,7 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def main(company: str | None = None):
+def main(company: str | None = None, max_reviews: int | None = None):
     """Función principal que orquesta el proceso completo de scraping.
     
     Flujo de ejecución:
@@ -1134,6 +1208,10 @@ def main(company: str | None = None):
     """
     logger = setup_logger("web_scrapping")
     args = parse_args()
+
+    # Si se proporciona explícitamente a nivel de función, sobreescribe CLI.
+    if max_reviews is not None:
+        args.max_reviews = max_reviews
 
     # Si se invoca main(company=...), ese valor gobierna el flujo completo.
     # Se construye la URL desde el nombre de empresa (p. ej. sending.es).
@@ -1158,6 +1236,7 @@ def main(company: str | None = None):
         timeout=args.timeout,
         pause=args.pause,
         max_pages=args.max_pages,
+        max_reviews=args.max_reviews,
     )
 
     # Fallback con Playwright si se indicó y no se obtuvo nada
@@ -1167,10 +1246,17 @@ def main(company: str | None = None):
             start_url=args.url,
             pause=args.pause,
             max_pages=args.max_pages,
+            max_reviews=args.max_reviews,
         )
 
     # Deduplicar y limpiar
     reviews = dedup_and_prune(reviews)
+
+    # Asegura el límite también después de deduplicar (por seguridad).
+    if args.max_reviews is not None:
+        if args.max_reviews < 1:
+            raise ValueError("max_reviews debe ser >= 1")
+        reviews = reviews[: args.max_reviews]
 
     logger.info(f"Total de reseñas recolectadas: {len(reviews)}")
     out_path = resolve_output_path(args.url, args.out, company=company)

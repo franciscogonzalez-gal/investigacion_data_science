@@ -69,6 +69,12 @@ OPENAI_API_KEY=sk-tu-clave-aqui
 python run_pipeline.py --empresas-xlsx Empresas.xlsx --playwright
 ```
 
+Modo de pruebas (rápido): scrapea solo 3 reseñas por empresa y NO carga a BigQuery:
+
+```bash
+python run_pipeline.py --empresas-xlsx Empresas.xlsx --playwright --test-mode
+```
+
 Archivos generados (por defecto):
 
 - `review_data/` → CSVs por empresa.

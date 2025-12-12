@@ -211,7 +211,11 @@ def guardar_resenas_csv(df: pd.DataFrame, ruta_salida: str) -> None:
     df.to_csv(ruta_salida, index=False)
     logger.info(f"Reseñas guardadas en: {ruta_salida}")
 
-def main():
+def main(
+    carpeta_entrada: str = "review_data",
+    output_xlsx: str = "output/resenas_combinadas.xlsx",
+    output_csv: str = "output/resenas_combinadas.csv",
+):
     """
     Función principal que ejecuta el pipeline completo de procesamiento de reseñas.
     
@@ -255,7 +259,6 @@ def main():
         - Las operaciones de limpieza se realizan in-place para eficiencia de memoria
     """
     logger = setup_logger("procesado_resenas")
-    carpeta_entrada = "review_data"
     
     # Cargar reseñas desde CSVs
     logger.info("Cargando reseñas desde CSV...")
@@ -271,10 +274,16 @@ def main():
     df_resenas.drop_duplicates(subset=['review_id'], inplace=True)
     
     # Guardar reseñas en un archivo Excel
-    guardar_resenas_excel(df_resenas, "output/resenas_combinadas.xlsx")
+    out_dir = os.path.dirname(output_xlsx)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    guardar_resenas_excel(df_resenas, output_xlsx)
     
     # Guardar reseñas en un archivo CSV
-    guardar_resenas_csv(df_resenas, "output/resenas_combinadas.csv")
+    out_dir = os.path.dirname(output_csv)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    guardar_resenas_csv(df_resenas, output_csv)
     
    
     

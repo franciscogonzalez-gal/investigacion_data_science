@@ -386,7 +386,11 @@ def validate_fields(d: Dict[str, Any]) -> None:
 # -----------------------------
 # Carga CSV, clasificación y guardado
 # -----------------------------
-def main():
+def main(
+    input_csv: str = INPUT_CSV,
+    output_xlsx: str = OUTPUT_XLSX,
+    max_rows: int | None = None,
+):
     """
     Función principal que ejecuta el pipeline completo de clasificación.
     
@@ -428,10 +432,14 @@ def main():
     """
     # Cargar reseñas
     logger = setup_logger("llm_parse")
-    if not os.path.exists(INPUT_CSV):
-        raise FileNotFoundError(f"No se encontró el CSV de entrada: {INPUT_CSV}")
+    if not os.path.exists(input_csv):
+        raise FileNotFoundError(f"No se encontró el CSV de entrada: {input_csv}")
 
-    df = pd.read_csv(INPUT_CSV)
+    df = pd.read_csv(input_csv)
+    if max_rows is not None:
+        if max_rows < 1:
+            raise ValueError("max_rows debe ser >= 1")
+        df = df.head(max_rows)
     if TEXT_COLUMN not in df.columns:
         raise KeyError(f"El CSV debe contener la columna '{TEXT_COLUMN}' con el texto de la reseña.")
 
@@ -476,8 +484,11 @@ def main():
     out_df = pd.DataFrame(results)
 
     # Guardar a Excel (openpyxl)
-    out_df.to_excel(OUTPUT_XLSX, index=False)
-    logger.info(f"Listo. Guardado en: {OUTPUT_XLSX}\nFilas: {len(out_df)}")
+    out_dir = os.path.dirname(output_xlsx)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    out_df.to_excel(output_xlsx, index=False)
+    logger.info(f"Listo. Guardado en: {output_xlsx}\nFilas: {len(out_df)}")
     
    
 

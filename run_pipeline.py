@@ -248,6 +248,7 @@ def run_web_scraping_for_empresas(
     timeout: int,
     pause: float,
     max_pages: int,
+    max_reviews: int | None,
     playwright: bool,
     conservative: bool,
 ) -> None:
@@ -265,6 +266,9 @@ def run_web_scraping_for_empresas(
         Pausa (s) entre páginas.
     max_pages : int
         Número máximo de páginas a recorrer por empresa.
+    max_reviews : int | None
+        Límite de reseñas (deduplicadas) a recolectar por empresa. Si es
+        ``None``, no se aplica límite.
     playwright : bool
         Si True, activa el modo Playwright en ``web_scrapping``.
     conservative : bool
@@ -292,6 +296,8 @@ def run_web_scraping_for_empresas(
             "--max-pages",
             str(max_pages),
         ]
+        if max_reviews is not None:
+            argv.extend(["--max-reviews", str(max_reviews)])
         if playwright:
             argv.append("--playwright")
         if conservative:
@@ -323,6 +329,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--timeout", type=int, default=25, help="Timeout (s) por request en scraping.")
     ap.add_argument("--pause", type=float, default=2.0, help="Pausa (s) entre páginas en scraping.")
     ap.add_argument("--max-pages", type=int, default=500, help="Máximo de páginas por empresa.")
+    ap.add_argument(
+        "--test-mode",
+        action="store_true",
+        help="Modo pruebas: scrapea solo 3 reseñas por empresa y NO carga a BigQuery.",
+    )
     ap.add_argument("--playwright", action="store_true", help="Usa Playwright como fallback si requests no extrae.")
     ap.add_argument("--conservative", action="store_true", help="Aborta si robots.txt no es legible (modo conservador).")
     return ap.parse_args()
@@ -343,8 +354,28 @@ def main() -> None:
     logger = setup_logger("run_pipeline")
     args = parse_args()
 
-    os.makedirs("output", exist_ok=True)
-    os.makedirs("review_data", exist_ok=True)
+    max_reviews = 3 if args.test_mode else None
+    review_data_dir = "review_data_test" if args.test_mode else "review_data"
+    output_dir = "output_test" if args.test_mode else "output"
+
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(review_data_dir, exist_ok=True)
+
+    # En modo pruebas, evita mezclar con datos de ejecuciones anteriores.
+    if args.test_mode:
+        for name in os.listdir(review_data_dir):
+            if name.lower().endswith(".csv") and name.lower().startswith("trustpilot_reviews_"):
+                try:
+                    os.remove(os.path.join(review_data_dir, name))
+                except OSError:
+                    pass
+
+        for name in os.listdir(output_dir):
+            if name.lower().startswith("resenas_") and (name.lower().endswith(".csv") or name.lower().endswith(".xlsx")):
+                try:
+                    os.remove(os.path.join(output_dir, name))
+                except OSError:
+                    pass
 
     logger.info("Leyendo Empresas.xlsx...")
     empresas = read_empresas_from_excel(
@@ -359,22 +390,37 @@ def main() -> None:
     logger.info(f"Empresas a scrapear: {len(empresas)}")
     run_web_scraping_for_empresas(
         empresas=empresas,
-        review_data_dir="review_data",
+        review_data_dir=review_data_dir,
         timeout=args.timeout,
         pause=args.pause,
         max_pages=args.max_pages,
+        max_reviews=max_reviews,
         playwright=args.playwright,
         conservative=args.conservative,
     )
 
     logger.info("Ejecutando procesado_resenas...")
-    procesado_resenas.main()
+    combined_xlsx = os.path.join(output_dir, "resenas_combinadas.xlsx")
+    combined_csv = os.path.join(output_dir, "resenas_combinadas.csv")
+    procesado_resenas.main(
+        carpeta_entrada=review_data_dir,
+        output_xlsx=combined_xlsx,
+        output_csv=combined_csv,
+    )
 
     logger.info("Ejecutando llm_parse...")
-    llm_parse.main()
+    llm_out_xlsx = os.path.join(output_dir, "resenas_clasificadas.xlsx")
+    llm_parse.main(
+        input_csv=combined_csv,
+        output_xlsx=llm_out_xlsx,
+        max_rows=3 if args.test_mode else None,
+    )
 
-    logger.info("Ejecutando load_to_bigquery...")
-    load_to_bigquery.main()
+    if args.test_mode:
+        logger.info("Modo pruebas activo: se omite load_to_bigquery.")
+    else:
+        logger.info("Ejecutando load_to_bigquery...")
+        load_to_bigquery.main()
 
     logger.info("Pipeline completo finalizado.")
 
