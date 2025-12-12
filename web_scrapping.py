@@ -126,6 +126,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -149,7 +150,7 @@ except ImportError:
 # Configuración predeterminada
 # ==========================
 DEFAULT_START_URL = "https://es.trustpilot.com/review/sending.es"
-DEFAULT_OUTPUT_CSV = "review_data/trustpilot_reviews_sending.es.csv"
+DEFAULT_OUTPUT_CSV: str | None = None  # si no se especifica, se calcula desde la URL
 DEFAULT_TIMEOUT = 25
 DEFAULT_PAUSE = 2.0
 DEFAULT_MAX_PAGES = 500
@@ -431,6 +432,67 @@ def _is_trustpilot(url: str) -> bool:
     """  
     host = urlparse(url).netloc.lower()
     return "trustpilot." in host
+
+
+def _safe_filename_component(s: str | None) -> str:
+    """Convierte un texto en un componente seguro para nombre de archivo."""
+    s = (s or "").strip()
+    if not s:
+        return "reviews"
+    # Permite letras, números, punto (para dominios), guion y underscore.
+    s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)
+    s = s.strip("._-")
+    return s or "reviews"
+
+
+def company_from_url(url: str) -> str:
+    """Extrae el identificador de empresa desde una URL de Trustpilot.
+
+    Ejemplo:
+    - https://es.trustpilot.com/review/sending.es -> sending.es
+    """
+    parsed = urlparse(url)
+    path = parsed.path or ""
+    # Trustpilot normalmente usa /review/<empresa>
+    m = re.search(r"/review/([^/?#]+)", path, re.I)
+    company = m.group(1) if m else (parsed.netloc or "")
+    company = company.replace("www.", "")
+    return _safe_filename_component(company)
+
+
+def trustpilot_review_url(company_or_url: str) -> str:
+    """Construye la URL de reseñas de Trustpilot a partir de un nombre de empresa.
+
+    Si se recibe una URL completa (http/https), se devuelve tal cual.
+    Ejemplo: "sending.es" -> "https://es.trustpilot.com/review/sending.es"
+    """
+    s = (company_or_url or "").strip()
+    if not s:
+        return DEFAULT_START_URL
+    if re.match(r"^https?://", s, flags=re.I):
+        return s
+    return f"https://es.trustpilot.com/review/{s}"
+
+
+def resolve_output_path(start_url: str, out_arg: str | None, company: str | None = None) -> str:
+    """Determina la ruta del CSV de salida.
+
+    - Si out_arg es None: genera review_data/trustpilot_reviews_<empresa>.csv
+    - Si out_arg es un directorio: crea el archivo dentro del directorio.
+    - Si out_arg apunta a archivo: lo respeta tal cual.
+    """
+    company_name = _safe_filename_component(company) if company else company_from_url(start_url)
+    default_name = f"trustpilot_reviews_{company_name}.csv"
+    default_path = os.path.join("review_data", default_name)
+
+    if not out_arg:
+        return default_path
+
+    # Si parece directorio (termina con / o \) o existe como dir, guardar dentro.
+    if out_arg.endswith(("/", "\\")) or os.path.isdir(out_arg):
+        return os.path.join(out_arg, default_name)
+
+    return out_arg
 
 
 # ==========================
@@ -1040,7 +1102,14 @@ def parse_args() -> argparse.Namespace:
     """
     ap = argparse.ArgumentParser(description="Scraper de reseñas (Trustpilot).")
     ap.add_argument("--url", default=DEFAULT_START_URL, help="URL de inicio (página de reseñas).")
-    ap.add_argument("--out", default=DEFAULT_OUTPUT_CSV, help="Ruta del CSV de salida.")
+    ap.add_argument(
+        "--out",
+        default=DEFAULT_OUTPUT_CSV,
+        help=(
+            "Ruta del CSV de salida. Si se omite, se genera automáticamente como "
+            "review_data/trustpilot_reviews_<empresa>.csv"
+        ),
+    )
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="Timeout por request (s).")
     ap.add_argument("--pause", type=float, default=DEFAULT_PAUSE, help="Pausa entre páginas (s).")
     ap.add_argument("--max-pages", type=int, default=DEFAULT_MAX_PAGES, help="Límite de páginas a recorrer.")
@@ -1052,7 +1121,7 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def main():
+def main(company: str | None = None):
     """Función principal que orquesta el proceso completo de scraping.
     
     Flujo de ejecución:
@@ -1065,6 +1134,11 @@ def main():
     """
     logger = setup_logger("web_scrapping")
     args = parse_args()
+
+    # Si se invoca main(company=...), ese valor gobierna el flujo completo.
+    # Se construye la URL desde el nombre de empresa (p. ej. sending.es).
+    if company:
+        args.url = trustpilot_review_url(company)
 
     headers = {
         "User-Agent": args.user_agent,
@@ -1099,8 +1173,12 @@ def main():
     reviews = dedup_and_prune(reviews)
 
     logger.info(f"Total de reseñas recolectadas: {len(reviews)}")
-    save_csv(reviews, args.out)
-    logger.info(f"CSV guardado en: {args.out}")
+    out_path = resolve_output_path(args.url, args.out, company=company)
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    save_csv(reviews, out_path)
+    logger.info(f"CSV guardado en: {out_path}")
 
 
 if __name__ == "__main__":
