@@ -209,6 +209,8 @@ Notas:
 
 - La entrada por defecto es `output/resenas_combinadas.csv` y la columna de texto esperada es `body`.
 - El modelo por defecto está definido en el código como `MODEL_NAME = "gpt-5"`.
+- El prompt del sistema ya no está hardcodeado: se edita en [llm_parse_system_prompt.md](llm_parse_system_prompt.md).
+  - Opcional: para usar otro archivo, define `LLM_PARSE_SYSTEM_PROMPT_PATH` (ruta absoluta o relativa a la carpeta del script).
 
 ---
 
@@ -286,6 +288,9 @@ Crear un archivo `.env` en la raíz del proyecto con (mínimo):
 ```env
 # OpenAI API Key
 OPENAI_API_KEY=sk-tu-clave-aqui
+
+# (Opcional) Prompt del clasificador para llm_parse.py
+# LLM_PARSE_SYSTEM_PROMPT_PATH=llm_parse_system_prompt.md
 
 # Google Cloud (opcional si prefieres variables)
 # GOOGLE_APPLICATION_CREDENTIALS=alpine-realm-352216-66fb3ad8f36b.json
