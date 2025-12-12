@@ -1,7 +1,7 @@
 # Análisis Automatizado de Reseñas de Clientes con LLM, Power BI y BigQuery
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4-412991?style=for-the-badge&logo=openai&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--5-412991?style=for-the-badge&logo=openai&logoColor=white)
 ![Google Cloud](https://img.shields.io/badge/Google_Cloud-BigQuery-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)
 ![Power BI](https://img.shields.io/badge/Power_BI-Dashboard-F2C811?style=for-the-badge&logo=powerbi&logoColor=black)
 ![Pandas](https://img.shields.io/badge/Pandas-Data_Processing-150458?style=for-the-badge&logo=pandas&logoColor=white)
@@ -9,6 +9,8 @@
 ![Conda](https://img.shields.io/badge/Conda-Environment-44A833?style=for-the-badge&logo=anaconda&logoColor=white)
 
 Este proyecto implementa un **pipeline completo de análisis de reseñas de clientes**, que abarca desde la **extracción automática de datos desde Trustpilot** hasta la **clasificación semántica con modelos de lenguaje (LLM)** y la **visualización de resultados en Power BI** conectada a **Google BigQuery**.
+
+El punto de entrada recomendado para ejecutar todo el flujo es: **`run_pipeline.py`**.
 
 ---
 
@@ -38,6 +40,43 @@ Este flujo automatizado transforma reseñas de clientes en **información estrat
 
 ---
 
+## 🚀 Ejecución Rápida (pipeline completo)
+
+1) Crear y activar el entorno:
+
+```bash
+conda env create -f environment.yml
+conda activate investigacion_ds
+```
+
+2) Instalar navegador para Playwright (solo una vez por entorno):
+
+```bash
+playwright install chromium
+```
+
+3) Configurar credenciales (mínimo OpenAI):
+
+- Crear/editar `.env` en la raíz con:
+
+```env
+OPENAI_API_KEY=sk-tu-clave-aqui
+```
+
+4) Ejecutar el orquestador:
+
+```bash
+python run_pipeline.py --empresas-xlsx Empresas.xlsx --playwright
+```
+
+Archivos generados (por defecto):
+
+- `review_data/` → CSVs por empresa.
+- `output/resenas_combinadas.xlsx` y `output/resenas_combinadas.csv`.
+- `output/resenas_clasificadas.xlsx` (resultado del LLM).
+
+---
+
 ## ⚠️ Nota Ética y Legal
 
 El **scraping de Trustpilot** se utilizó **únicamente con fines educativos y de aprendizaje técnico**.
@@ -52,17 +91,24 @@ Esto garantiza el cumplimiento de sus **términos de servicio, políticas de pri
 
 ```
 .
+├── run_pipeline.py                     # Orquestador end-to-end (recomendado)
+├── Empresas.xlsx                       # Listado de empresas/URLs a procesar
 ├── web_scrapping.py                    # Extracción de reseñas (Trustpilot)
 ├── procesado_resenas.py                # Limpieza y combinación de CSVs
-├── llm_parse.py                        # Clasificación automática con OpenAI GPT
+├── llm_parse.py                        # Clasificación automática con OpenAI (Responses API)
 ├── load_to_bigquery.py                 # Carga de resultados en Google BigQuery
 ├── libreria_conexion_big_query.py      # Biblioteca auxiliar para operaciones con BigQuery
 ├── logger_library.py                   # Sistema de logging centralizado
 ├── environment.yml                     # Configuración del entorno Conda
-├── .env                                # Variables de entorno (no versionado)
-├── alpine-realm-XXXX.json              # Credenciales de Google Cloud (no versionado)
-├── Tablero.pbix                        # Dashboard de Power BI
+├── .env                                # Variables de entorno (recomendado: no publicar)
+├── alpine-realm-352216-66fb3ad8f36b.json # Credenciales GCP (recomendado: no publicar)
+├── Tablero.pbix                        # Dashboard de Power BI (archivo local)
 ├── diagrama.pdf                        # Diagrama del flujo del proyecto
+├── diagrama.docx                       # Diagrama (fuente editable)
+├── repo_qr.png                         # QR del repositorio
+├── tablero_qr.png                      # QR del tablero
+├── Trustpilot-Logo.jpg                 # Recurso gráfico
+├── events.log                          # Log/bitácora (si aplica)
 ├── output/                             # Archivos de salida procesados
 │   └── resenas_combinadas.csv
 └── review_data/                        # Reseñas extraídas por empresa
@@ -77,10 +123,10 @@ Esto garantiza el cumplimiento de sus **términos de servicio, políticas de pri
 
 Script configurable para recolectar reseñas desde Trustpilot u otros portales con formato estructurado (JSON-LD o HTML).
 
-**Ejemplo de uso:**
+**Ejemplo de uso (directo):**
 
 ```bash
-python web_scrapping.py --url "https://es.trustpilot.com/review/empresa.com" --out review_data/trustpilot_reviews_empresa.csv
+python web_scrapping.py --url "https://es.trustpilot.com/review/sending.es" --out review_data/trustpilot_reviews_sending.csv --max-pages 50 --pause 2
 ```
 
 **Características:**
@@ -106,11 +152,13 @@ Combina múltiples archivos CSV en un solo DataFrame, normaliza nombres de compa
 python procesado_resenas.py
 ```
 
+Nota: si ejecutas el pipeline con `run_pipeline.py`, este script se ejecuta automáticamente y también crea `output/` y `review_data/` si no existen.
+
 ---
 
 ## 🤖 3. Clasificación con LLM (`llm_parse.py`)
 
-Analiza automáticamente las reseñas usando la API de OpenAI.
+Analiza automáticamente las reseñas usando **OpenAI Responses API** (cliente oficial `openai`).
 Cada texto se clasifica por **sentimiento** y **categoría general/específica** según un conjunto predefinido de etiquetas.
 
 ### Esquema de Clasificación
@@ -135,11 +183,17 @@ Cada texto se clasifica por **sentimiento** y **categoría general/específica**
 **Requiere:**
 
 ```bash
-# Windows
-setx OPENAI_API_KEY "sk-..."
+# Opción A (recomendado): .env en la raíz
+# OPENAI_API_KEY=sk-...
 
-# macOS/Linux
-export OPENAI_API_KEY="sk-..."
+# Opción B (Windows CMD) — solo para esta terminal
+set OPENAI_API_KEY=sk-...
+
+# Opción C (PowerShell) — solo para esta terminal
+$env:OPENAI_API_KEY = "sk-..."
+
+# Opción D (persistente en Windows; requiere abrir una terminal nueva)
+setx OPENAI_API_KEY "sk-..."
 ```
 
 **Ejemplo:**
@@ -151,6 +205,11 @@ python llm_parse.py
 **Salida:**
 Archivo Excel `output/resenas_clasificadas.xlsx` con resultados clasificados y trazabilidad completa.
 
+Notas:
+
+- La entrada por defecto es `output/resenas_combinadas.csv` y la columna de texto esperada es `body`.
+- El modelo por defecto está definido en el código como `MODEL_NAME = "gpt-5"`.
+
 ---
 
 ## ☁️ 4. Carga en BigQuery (`load_to_bigquery.py`)
@@ -158,13 +217,15 @@ Archivo Excel `output/resenas_clasificadas.xlsx` con resultados clasificados y t
 Transfiere los datos clasificados al entorno de análisis en Google BigQuery.
 Ideal para conectar con herramientas BI como Power BI, Looker o Data Studio.
 
+Este script lee por defecto: `output/resenas_clasificadas.xlsx`.
+
 **Configuración:**
 
 ```python
-GCP_PROJECT_ID = "tu-proyecto"
+GCP_PROJECT_ID = "alpine-realm-352216"
 GCP_DATASET_ID = "galileo"
 GCP_TABLE_ID = "resenas_clasificadas"
-GOOGLE_JSON_CREDENTIALS_PATH = "credenciales.json"
+GOOGLE_JSON_CREDENTIALS_PATH = "alpine-realm-352216-66fb3ad8f36b.json"
 ```
 
 **Ejecución:**
@@ -185,6 +246,11 @@ graph LR
     C --> D[☁️ load_to_bigquery.py<br/>Carga a la Nube]
     D --> E[(📊 BigQuery<br/>Data Warehouse)]
     E --> F[📈 Power BI Dashboard<br/>Visualización]
+
+  X[run_pipeline.py<br/>Orquestación end-to-end] -. ejecuta .-> A
+  X -. ejecuta .-> B
+  X -. ejecuta .-> C
+  X -. ejecuta .-> D
 ```
 
 ---
@@ -215,15 +281,15 @@ playwright install chromium
 
 ### Configuración de Variables de Entorno
 
-Crear un archivo `.env` en la raíz del proyecto con:
+Crear un archivo `.env` en la raíz del proyecto con (mínimo):
 
 ```env
 # OpenAI API Key
 OPENAI_API_KEY=sk-tu-clave-aqui
 
-# Google Cloud (opcional si se usa archivo JSON directo)
-GOOGLE_APPLICATION_CREDENTIALS=alpine-realm-XXXX.json
-GCP_PROJECT_ID=tu-proyecto-id
+# Google Cloud (opcional si prefieres variables)
+# GOOGLE_APPLICATION_CREDENTIALS=alpine-realm-352216-66fb3ad8f36b.json
+# GCP_PROJECT_ID=alpine-realm-352216
 ```
 
 ### Credenciales de Google Cloud
@@ -276,7 +342,7 @@ logger.info("Mensaje de ejemplo")
 **Solución:** Asegúrate de haber exportado la variable de entorno o incluirla en el archivo `.env`
 
 ### Error: "No module named 'playwright'"
-**Solución:** Ejecuta `playwright install chromium` dentro del entorno activado
+**Solución:** Verifica que el entorno `investigacion_ds` esté activado y que creaste el entorno desde `environment.yml`. Luego ejecuta `playwright install chromium`.
 
 ### Error: "Access Denied" en BigQuery
 **Solución:** Verifica que la cuenta de servicio tenga permisos de **BigQuery Data Editor** y **BigQuery Job User**
@@ -285,7 +351,7 @@ logger.info("Mensaje de ejemplo")
 **Solución:** Reduce el volumen de reseñas o implementa delays entre llamadas. Considera upgrade del plan de OpenAI.
 
 ### CSV con encoding incorrecto
-**Solución:** El proyecto usa `utf-8-sig` por defecto. Verifica encoding con: `file --mime encoding archivo.csv`
+**Solución:** El scraper guarda CSV como `utf-8-sig` (compatible con Excel en Windows). Si ves caracteres raros, re-exporta desde pandas usando `encoding="utf-8-sig"` o abre/importa el CSV especificando UTF-8.
 
 ---
 

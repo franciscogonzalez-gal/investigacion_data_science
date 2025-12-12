@@ -1,24 +1,39 @@
 # -*- coding: utf-8 -*-
-"""run_pipeline.py — Orquestador del pipeline completo
+"""run_pipeline.py — Orquestador del pipeline completo.
 
-Lee el listado de empresas a scrapear desde 'Empresas.xlsx', ejecuta el loop de
-web scraping (Trustpilot), luego ejecuta:
-  1) procesado_resenas
-  2) llm_parse
-  3) load_to_bigquery
+Este script ejecuta el pipeline end-to-end:
 
-Uso:
-  python run_pipeline.py
+1) Lee un listado de empresas desde un Excel (por defecto ``Empresas.xlsx``).
+2) Ejecuta scraping de reseñas con ``web_scrapping.py``.
+3) Ejecuta ``procesado_resenas``.
+4) Ejecuta ``llm_parse``.
+5) Ejecuta ``load_to_bigquery``.
+
+El Excel puede contener:
+- Una columna de empresa/dominio (por ejemplo ``Empresa``) con valores como
+    ``sending.es``.
+- Opcionalmente, una columna de URL; si está presente, se usa tal cual.
+
+Importante
+----------
+La construcción/normalización de la URL de Trustpilot se delega a
+``web_scrapping.main(company=...)``: si se recibe un dominio, ``web_scrapping``
+construye ``https://es.trustpilot.com/review/<dominio>``; si se recibe una URL
+completa, la respeta.
+
+Uso
+---
+Ejemplo:
+        python run_pipeline.py
 
 Opcional:
-  python run_pipeline.py --empresas-xlsx Empresas.xlsx --sheet Hoja1 --playwright
+        python run_pipeline.py --empresas-xlsx Empresas.xlsx --sheet Hoja1 --playwright
 
-Notas:
-- Este orquestador llama a web_scrapping usando su interfaz CLI interna (argparse)
-  de forma segura, aislando sys.argv por cada ejecución.
-- Requiere que existan/estén configuradas las credenciales:
-  - OPENAI_API_KEY (para llm_parse)
-  - Credenciales GCP JSON según load_to_bigquery.py
+Requisitos
+----------
+- Variables/credenciales según los módulos invocados:
+    - ``OPENAI_API_KEY`` (para ``llm_parse``)
+    - Credenciales GCP JSON según ``load_to_bigquery.py``
 """
 
 from __future__ import annotations
@@ -42,13 +57,36 @@ from logger_library import setup_logger
 
 @dataclass(frozen=True)
 class EmpresaSpec:
+    """Especificación de una empresa a procesar.
+
+    Parameters
+    ----------
+    company : str
+        Nombre legible de la empresa (se usa para logs y para nombre de archivo).
+    company_or_url : str
+        Identificador de entrada que se le pasa a ``web_scrapping``.
+        Puede ser un dominio (p. ej. ``sending.es``) o una URL completa.
+    """
+
     company: str
-    url: str
+    company_or_url: str
 
 
 @contextmanager
 def patched_argv(new_argv: list[str]):
-    """Reemplaza temporalmente sys.argv para invocar módulos con argparse."""
+    """Reemplaza temporalmente ``sys.argv`` para invocar módulos con argparse.
+
+    Parameters
+    ----------
+    new_argv : list[str]
+        Lista completa de argumentos (incluyendo el nombre del script como
+        primer elemento) que será asignada a ``sys.argv`` durante el contexto.
+
+    Yields
+    ------
+    None
+        No retorna valores; únicamente administra el estado de ``sys.argv``.
+    """
     old_argv = sys.argv[:]
     sys.argv = new_argv
     try:
@@ -58,6 +96,18 @@ def patched_argv(new_argv: list[str]):
 
 
 def slugify_company(value: str) -> str:
+    """Convierte un nombre de empresa a un slug seguro para archivos.
+
+    Parameters
+    ----------
+    value : str
+        Texto de entrada (nombre de empresa/dominio).
+
+    Returns
+    -------
+    str
+        Slug en minúsculas que contiene solo caracteres seguros.
+    """
     s = str(value or "").strip()
     s = re.sub(r"\s+", "_", s)
     s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)
@@ -65,24 +115,22 @@ def slugify_company(value: str) -> str:
     return s.lower() or "empresa"
 
 
-def normalize_trustpilot_url(value: str) -> str:
-    v = str(value or "").strip()
-    if not v:
-        raise ValueError("URL/empresa vacía")
-
-    if v.startswith("http://") or v.startswith("https://"):
-        return v
-
-    # Si viene como host/path sin esquema
-    if "trustpilot.com" in v:
-        return "https://" + v.lstrip("/")
-
-    # Si viene como dominio (p. ej. sending.es)
-    domain = re.sub(r"^https?://", "", v).strip().strip("/")
-    return f"https://es.trustpilot.com/review/{domain}"
-
-
 def _pick_column(df: pd.DataFrame, candidates: Iterable[str]) -> Optional[str]:
+    """Encuentra una columna del DataFrame por lista de candidatos (case-insensitive).
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame con columnas leídas desde Excel.
+    candidates : Iterable[str]
+        Nombres de columnas candidatos (se comparan en minúsculas y recortados).
+
+    Returns
+    -------
+    str | None
+        El nombre real de la columna existente en ``df`` o ``None`` si no se
+        encuentra coincidencia.
+    """
     lowered = {str(c).strip().lower(): str(c) for c in df.columns}
     for c in candidates:
         if c.lower() in lowered:
@@ -96,6 +144,38 @@ def read_empresas_from_excel(
     company_col: Optional[str] = None,
     url_col: Optional[str] = None,
 ) -> list[EmpresaSpec]:
+    """Lee el listado de empresas desde un archivo Excel.
+
+    El Excel puede tener una o dos columnas relevantes:
+    - Empresa/dominio (p. ej. ``Empresa``): valores como ``sending.es``.
+    - URL (p. ej. ``url``/``enlace``): una URL completa a Trustpilot.
+
+    La URL final se delega a ``web_scrapping``: este lector solo conserva el
+    valor de entrada como ``company_or_url``.
+
+    Parameters
+    ----------
+    xlsx_path : str
+        Ruta del archivo Excel.
+    sheet : str | None, default=None
+        Nombre de la hoja. Si es ``None``, usa la primera hoja.
+    company_col : str | None, default=None
+        Nombre exacto de la columna de empresa/dominio. Si es ``None``, se
+        intenta detectar automáticamente.
+    url_col : str | None, default=None
+        Nombre exacto de la columna de URL. Si es ``None``, se intenta detectar
+        automáticamente.
+
+    Returns
+    -------
+    list[EmpresaSpec]
+        Lista de empresas deduplicadas por ``company_or_url``.
+
+    Raises
+    ------
+    FileNotFoundError
+        Si ``xlsx_path`` no existe.
+    """
     if not os.path.exists(xlsx_path):
         raise FileNotFoundError(f"No se encontró el archivo Excel: {xlsx_path}")
 
@@ -139,29 +219,26 @@ def read_empresas_from_excel(
         raw_company = row.get(detected_company_col) if detected_company_col else None
         raw_url = row.get(detected_url_col) if detected_url_col else None
 
-        # Derivación flexible:
-        # - si hay URL, úsala
-        # - si no hay URL, usa el valor de company como dominio/empresa
+        # Delegamos la construcción/normalización de la URL a web_scrapping.py.
+        # - Si hay una URL explícita en el Excel, la usamos tal cual.
+        # - Si no, usamos el valor de la empresa/dominio (p. ej. sending.es) y
+        #   web_scrapping construirá https://es.trustpilot.com/review/<empresa>.
         if raw_url is not None and str(raw_url).strip():
-            url = normalize_trustpilot_url(str(raw_url))
+            company_or_url = str(raw_url).strip()
         elif raw_company is not None and str(raw_company).strip():
-            url = normalize_trustpilot_url(str(raw_company))
+            company_or_url = str(raw_company).strip()
         else:
             continue
 
-        # Company para nombre de archivo
-        if raw_company is not None and str(raw_company).strip():
-            company = str(raw_company).strip()
-        else:
-            # si no hay company, intenta inferir desde la URL
-            company = url.split("/review/")[-1].strip("/") or url
+        # Company para nombre de archivo/log (si no hay, reusar company_or_url)
+        company = str(raw_company).strip() if raw_company is not None and str(raw_company).strip() else company_or_url
 
-        empresas.append(EmpresaSpec(company=company, url=url))
+        empresas.append(EmpresaSpec(company=company, company_or_url=company_or_url))
 
-    # Dedup por URL
+    # Dedup por entrada (URL o empresa/dominio)
     unique: dict[str, EmpresaSpec] = {}
     for e in empresas:
-        unique[e.url] = e
+        unique[e.company_or_url.strip().lower()] = e
     return list(unique.values())
 
 
@@ -174,6 +251,29 @@ def run_web_scraping_for_empresas(
     playwright: bool,
     conservative: bool,
 ) -> None:
+    """Ejecuta ``web_scrapping`` para una lista de empresas.
+
+    Parameters
+    ----------
+    empresas : list[EmpresaSpec]
+        Empresas a scrapear.
+    review_data_dir : str
+        Directorio donde se guardarán los CSV de reseñas.
+    timeout : int
+        Timeout (s) por request.
+    pause : float
+        Pausa (s) entre páginas.
+    max_pages : int
+        Número máximo de páginas a recorrer por empresa.
+    playwright : bool
+        Si True, activa el modo Playwright en ``web_scrapping``.
+    conservative : bool
+        Si True, activa modo conservador respecto a robots.txt.
+
+    Returns
+    -------
+    None
+    """
     logger = setup_logger("run_pipeline.web_scraping")
     os.makedirs(review_data_dir, exist_ok=True)
 
@@ -183,8 +283,6 @@ def run_web_scraping_for_empresas(
 
         argv = [
             "web_scrapping.py",
-            "--url",
-            e.url,
             "--out",
             out_csv,
             "--timeout",
@@ -199,16 +297,23 @@ def run_web_scraping_for_empresas(
         if conservative:
             argv.append("--conservative")
 
-        logger.info(f"Scrape: {e.company} -> {e.url}")
+        logger.info(f"Scrape: {e.company} -> {e.company_or_url}")
         try:
             with patched_argv(argv):
-                # No pasamos company=... para no sobreescribir la URL.
-                web_scrapping.main()
+                web_scrapping.main(company=e.company_or_url)
         except Exception as ex:
-            logger.exception(f"Fallo scraping para '{e.company}' ({e.url}): {ex}")
+            logger.exception(f"Fallo scraping para '{e.company}' ({e.company_or_url}): {ex}")
 
 
 def parse_args() -> argparse.Namespace:
+    """Parsea argumentos de línea de comandos.
+
+    Returns
+    -------
+    argparse.Namespace
+        Argumentos parseados para controlar lectura del Excel y parámetros de
+        scraping.
+    """
     ap = argparse.ArgumentParser(description="Ejecuta el pipeline completo (scrape -> procesado -> LLM -> BigQuery).")
     ap.add_argument("--empresas-xlsx", default="Empresas.xlsx", help="Ruta al Excel con el listado de empresas.")
     ap.add_argument("--sheet", default=None, help="Nombre de hoja (sheet) a leer. Si se omite, usa la primera.")
@@ -224,6 +329,17 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Ejecuta el pipeline completo (scrape -> procesado -> LLM -> BigQuery).
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    RuntimeError
+        Si el Excel no contiene empresas válidas.
+    """
     logger = setup_logger("run_pipeline")
     args = parse_args()
 
